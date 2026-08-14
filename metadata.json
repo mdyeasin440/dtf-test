@@ -1,0 +1,6 @@
+{
+  "name": "Spidey Jersey DTF Print Automation",
+  "description": "DTF printing sheet layout generator for football jersey names and numbers with design preset mapping, 39 inch auto-nesting engine, interactive drag and drop preview, and 300 DPI export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
