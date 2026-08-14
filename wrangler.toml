@@ -2,16 +2,19 @@ name = "dtf-test"
 compatibility_date = "2026-03-01"
 main = "src/worker.ts"
 
+# Cloudflare Static Assets Binding
 [assets]
 directory = "./dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 
+# Cloudflare D1 Database Binding
 [[d1_databases]]
 binding = "MY_DB"
 database_name = "spideyjerseydtf"
 database_id = "3d46755b-e7c4-4cb5-8d87-34dd31c56204"
 
+# Cloudflare R2 Bucket Binding
 [[r2_buckets]]
 binding = "MY_BUCKET"
-bucket_name = "test-upload-bucket"
+bucket_name = "dftest"
