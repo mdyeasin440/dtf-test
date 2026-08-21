@@ -1,4 +1,4 @@
-name = "spidet-jersey-dtf"
+name = "dtf-test"
 compatibility_date = "2026-03-01"
 main = "src/worker.ts"
 
