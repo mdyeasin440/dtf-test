@@ -123,16 +123,45 @@ export default function App() {
     };
   });
 
-  // Fetch updated presets from Cloudflare D1 on initial mount
+  // Fetch updated presets from Cloudflare D1 on initial mount & on focus / tab visibility
   useEffect(() => {
     let isMounted = true;
-    fetchPresetsFromD1().then((d1Presets) => {
-      if (isMounted && d1Presets && d1Presets.length > 0) {
-        setPresets(d1Presets);
+
+    const syncWithCloud = () => {
+      fetchPresetsFromD1().then((d1Presets) => {
+        if (isMounted && d1Presets && d1Presets.length > 0) {
+          setPresets(d1Presets);
+        }
+      });
+    };
+
+    // Initial mount sync
+    syncWithCloud();
+
+    // Cross-tab sync within same browser
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'spidey_jersey_presets_v2' || e.key === 'spidey_user_custom_presets_v2' || e.key === 'spidey_deleted_preset_codes_v2') {
+        const local = getLocalPresets();
+        if (isMounted) setPresets(local);
       }
-    });
+    };
+
+    // Cross-device sync when user switches back to this browser window / tab
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        syncWithCloud();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
     return () => {
       isMounted = false;
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
   }, []);
 

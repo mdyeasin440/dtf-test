@@ -4,6 +4,7 @@ import { createServer as createViteServer } from 'vite';
 
 // In-memory backing for Node / Express development server
 const inMemoryPresets: Map<string, any> = new Map();
+const inMemoryDeletedPresets: Set<string> = new Set();
 const inMemoryOrders: Map<string, any> = new Map();
 
 async function startServer() {
@@ -44,6 +45,7 @@ async function startServer() {
     res.json({
       success: true,
       presets: presetsList,
+      deletedCodes: Array.from(inMemoryDeletedPresets),
       count: presetsList.length,
     });
   });
@@ -62,13 +64,15 @@ async function startServer() {
         for (const item of body) {
           if (item && item.code) {
             const id = item.id || `preset-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+            const code = (item.code || '').trim().toUpperCase();
             const preset = {
               ...item,
               id,
-              code: (item.code || '').trim().toUpperCase(),
+              code,
               updatedAt: new Date().toISOString(),
             };
             inMemoryPresets.set(id, preset);
+            inMemoryDeletedPresets.delete(code);
             savedPresets.push(preset);
           }
         }
@@ -86,14 +90,16 @@ async function startServer() {
       }
 
       const id = body.id || `preset-${Date.now()}`;
+      const code = (body.code || '').trim().toUpperCase();
       const preset = {
         ...body,
         id,
-        code: (body.code || '').trim().toUpperCase(),
+        code,
         updatedAt: new Date().toISOString(),
       };
 
       inMemoryPresets.set(id, preset);
+      inMemoryDeletedPresets.delete(code);
 
       return res.json({
         success: true,
@@ -117,15 +123,21 @@ async function startServer() {
       return res.status(400).json({ success: false, error: 'Preset ID is required' });
     }
 
+    for (const target of targets) {
+      inMemoryDeletedPresets.add(target);
+    }
+
     for (const [key, val] of inMemoryPresets.entries()) {
       const valId = (val.id || '').toUpperCase();
       const valCode = (val.code || '').toUpperCase();
       const match = targets.some((t) => key.toUpperCase() === t || valId === t || valCode === t);
       if (match) {
+        if (valCode) inMemoryDeletedPresets.add(valCode);
+        if (valId) inMemoryDeletedPresets.add(valId);
         inMemoryPresets.delete(key);
       }
     }
-    return res.json({ success: true, message: 'Preset permanently deleted from database' });
+    return res.json({ success: true, message: 'Preset permanently deleted from database', deletedCodes: targets });
   });
 
   // 5. POST /api/orders/bulk - Save parsed orders batch

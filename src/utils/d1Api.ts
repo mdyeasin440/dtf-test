@@ -224,10 +224,9 @@ export async function checkCloudflareStatus(): Promise<{
 
 /**
  * Fetch all design presets from the Cloudflare D1 database via API.
- * Automatically merges cloud database presets with local custom creations.
+ * Automatically merges cloud database presets with local custom creations and syncs deletions across all devices.
  */
 export async function fetchPresetsFromD1(): Promise<DesignPreset[]> {
-  const deletedSet = getDeletedPresetCodes();
   try {
     const res = await fetch('/api/presets');
     if (!res.ok) {
@@ -236,31 +235,35 @@ export async function fetchPresetsFromD1(): Promise<DesignPreset[]> {
     }
     const data = await res.json();
     if (data.success && Array.isArray(data.presets)) {
+      // 1. Sync any tombstoned deleted codes from cloud to local storage
+      if (Array.isArray(data.deletedCodes)) {
+        for (const delCode of data.deletedCodes) {
+          if (delCode) recordPresetDeleted(delCode);
+        }
+      }
+
+      const deletedSet = getDeletedPresetCodes();
       const defaultPresets = getFullPresetDatabase();
-      const localPresets = getLocalPresets();
       const customPresets = getSavedCustomPresets();
       const cloudPresets: DesignPreset[] = data.presets;
 
       const presetMap = new Map<string, DesignPreset>();
-      // 1. Add default presets first as baseline (excluding deleted)
+
+      // 2. Add default presets first as baseline (excluding deleted)
       for (const p of defaultPresets) {
         if (p && p.code && !deletedSet.has(p.code.toUpperCase())) {
           presetMap.set(p.code.toUpperCase(), p);
         }
       }
-      // 2. Add local presets
-      for (const p of localPresets) {
-        if (p && p.code && !deletedSet.has(p.code.toUpperCase())) {
-          presetMap.set(p.code.toUpperCase(), p);
-        }
-      }
+
       // 3. Overwrite / append cloud presets from D1 database (cloud is primary truth, excluding deleted)
       for (const p of cloudPresets) {
         if (p && p.code && !deletedSet.has(p.code.toUpperCase())) {
           presetMap.set(p.code.toUpperCase(), p);
         }
       }
-      // 4. Ensure local custom presets created in this browser are also present
+
+      // 4. Preserve local custom presets that are not deleted and not in cloud yet
       for (const p of customPresets) {
         if (p && p.code && !deletedSet.has(p.code.toUpperCase()) && !presetMap.has(p.code.toUpperCase())) {
           presetMap.set(p.code.toUpperCase(), p);
@@ -270,11 +273,6 @@ export async function fetchPresetsFromD1(): Promise<DesignPreset[]> {
       const merged = sortPresets(Array.from(presetMap.values()));
       saveLocalPresets(merged);
       preloadPresetFonts(merged);
-
-      // Auto-sync any local custom presets to D1 if D1 is missing them
-      if (cloudPresets.length === 0 && customPresets.length > 0) {
-        savePresetsToD1(customPresets).catch(() => {});
-      }
 
       return merged;
     }

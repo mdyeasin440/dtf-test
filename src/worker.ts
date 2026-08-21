@@ -159,6 +159,10 @@ async function ensureD1Tables(env: Env) {
         notes TEXT,
         updatedAt TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS deleted_presets (
+        code TEXT PRIMARY KEY,
+        deletedAt TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS orders (
         id TEXT PRIMARY KEY,
         orderNumber TEXT,
@@ -434,12 +438,21 @@ export default {
               success: false,
               error: 'Cloudflare D1 database binding (MY_DB) is not connected in Cloudflare Settings.',
               presets: [],
+              deletedCodes: [],
             }, 500);
           }
           await ensureD1Tables(env);
           const { results } = await env.MY_DB.prepare(
             `SELECT * FROM design_presets ORDER BY updatedAt DESC`
           ).all<any>();
+
+          let deletedCodes: string[] = [];
+          try {
+            const delRes = await env.MY_DB.prepare(`SELECT code FROM deleted_presets`).all<any>();
+            if (delRes && delRes.results) {
+              deletedCodes = delRes.results.map((r: any) => String(r.code || '').toUpperCase()).filter(Boolean);
+            }
+          } catch (_) {}
 
           const formatted = (results || []).map((row) => ({
             ...row,
@@ -449,7 +462,7 @@ export default {
             letterAssets: safeJsonParse(row.letterAssets),
           }));
 
-          return jsonResponse({ success: true, presets: formatted, count: formatted.length });
+          return jsonResponse({ success: true, presets: formatted, deletedCodes, count: formatted.length });
         }
 
         // POST /api/presets - Save single or array of presets
@@ -472,6 +485,16 @@ export default {
             }
             const statements = body.map((item) => buildUpsertStatement(env, item));
             await env.MY_DB.batch(statements);
+
+            // Unmark from deleted_presets
+            for (const item of body) {
+              if (item && item.code) {
+                try {
+                  await env.MY_DB.prepare(`DELETE FROM deleted_presets WHERE UPPER(code) = ?`).bind(String(item.code).toUpperCase()).run();
+                } catch (_) {}
+              }
+            }
+
             return jsonResponse({
               success: true,
               message: `${body.length} design presets saved to Cloudflare D1`,
@@ -485,6 +508,11 @@ export default {
 
           const stmt = buildUpsertStatement(env, body);
           await stmt.run();
+
+          // Unmark from deleted_presets
+          try {
+            await env.MY_DB.prepare(`DELETE FROM deleted_presets WHERE UPPER(code) = ?`).bind(String(body.code).toUpperCase()).run();
+          } catch (_) {}
 
           return jsonResponse({
             success: true,
@@ -521,11 +549,19 @@ export default {
             await env.MY_DB.prepare(
               `DELETE FROM design_presets WHERE id = ? OR code = ? OR UPPER(code) = ? OR UPPER(id) = ?`
             ).bind(term, term, term.toUpperCase(), term.toUpperCase()).run();
+
+            // Record tombstone in deleted_presets table for cross-device sync
+            const upper = term.toUpperCase();
+            try {
+              await env.MY_DB.prepare(
+                `INSERT INTO deleted_presets (code, deletedAt) VALUES (?, ?) ON CONFLICT(code) DO UPDATE SET deletedAt=excluded.deletedAt`
+              ).bind(upper, new Date().toISOString()).run();
+            } catch (_) {}
           }
 
           return jsonResponse({
             success: true,
-            message: 'Preset permanently deleted from Cloudflare D1',
+            message: 'Preset permanently deleted from Cloudflare D1 and tombstone recorded',
             deletedIdentifiers: searchTerms,
           });
         }
