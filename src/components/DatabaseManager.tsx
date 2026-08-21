@@ -625,7 +625,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-xl font-bold tracking-tighter text-white uppercase flex items-center space-x-2">
-            <Layers className="w-6 h-6 text-blue-500" />
+            <Layers className="w-6 h-6 text-red-500" />
             <span>Design & Font Management Database</span>
           </h1>
           <p className="text-xs text-zinc-400 font-mono mt-1">
@@ -640,13 +640,13 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
             title="Sync all presets directly from Cloudflare D1"
             className="flex items-center space-x-2 px-3.5 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 font-mono text-xs rounded transition-all shadow-md disabled:opacity-50"
           >
-            <RefreshCw className={`w-3.5 h-3.5 text-blue-400 ${isRefreshingCloud ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 text-red-400 ${isRefreshingCloud ? 'animate-spin' : ''}`} />
             <span>{isRefreshingCloud ? 'Syncing...' : 'Sync Cloud D1'}</span>
           </button>
 
           <button
             onClick={handleCreateNew}
-            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase tracking-wider text-xs rounded shadow-lg shadow-blue-900/20 transition-all"
+            className="flex items-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-bold uppercase tracking-wider text-xs rounded shadow-lg shadow-red-900/20 transition-all"
           >
             <Plus className="w-4 h-4" />
             <span>+ Add New Design Code</span>
@@ -676,8 +676,8 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
 
       {/* Status Feedback Notification */}
       {statusMessage && (
-        <div className="mb-6 p-3 bg-blue-950/60 border border-blue-500/40 rounded-lg flex items-center space-x-3 text-blue-300 text-xs font-mono shadow-lg transition-all">
-          <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
+        <div className="mb-6 p-3 bg-red-950/60 border border-red-500/40 rounded-lg flex items-center space-x-3 text-red-300 text-xs font-mono shadow-lg transition-all">
+          <CheckCircle2 className="w-4 h-4 text-red-400 shrink-0" />
           <span>{statusMessage}</span>
         </div>
       )}
@@ -691,7 +691,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
             placeholder="Search Design Code, Team, or Season..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-zinc-950 text-white pl-10 pr-4 py-2 rounded-lg border border-zinc-800 focus:border-blue-500 focus:outline-none text-xs font-mono placeholder:text-zinc-600"
+            className="w-full bg-zinc-950 text-white pl-10 pr-4 py-2 rounded-lg border border-zinc-800 focus:border-red-500 focus:outline-none text-xs font-mono placeholder:text-zinc-600"
           />
         </div>
 
@@ -703,7 +703,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
               onClick={() => setSelectedLeague(lg)}
               className={`px-3 py-1 rounded text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all ${
                 selectedLeague === lg
-                  ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                  ? 'bg-red-600/20 text-red-400 border border-red-500/30'
                   : 'bg-zinc-950 text-zinc-400 border border-zinc-800 hover:text-white'
               }`}
             >
@@ -723,7 +723,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
             <div>
               {/* Top Code Badge & League */}
               <div className="flex items-center justify-between mb-3">
-                <span className="font-mono font-bold text-xs px-2.5 py-1 bg-blue-600/10 text-blue-400 border border-blue-500/30 rounded">
+                <span className="font-mono font-bold text-xs px-2.5 py-1 bg-red-600/10 text-red-400 border border-red-500/30 rounded">
                   {preset.code}
                 </span>
                 <span className="text-[10px] font-mono uppercase text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
@@ -780,7 +780,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                   <span>Text: {preset.textColor}</span>
                 </div>
                 <div className="flex items-center space-x-1.5">
-                  <FileImage className="w-3.5 h-3.5 text-blue-400" />
+                  <FileImage className="w-3.5 h-3.5 text-red-400" />
                   <span>
                     {preset.numberAssets && Object.keys(preset.numberAssets).length > 0
                       ? `${Object.keys(preset.numberAssets).length} PNG Assets`
@@ -797,7 +797,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                   setEditingPreset(preset);
                   setIsCreating(false);
                 }}
-                className="flex items-center space-x-1.5 text-xs font-bold uppercase tracking-wider text-blue-400 hover:text-blue-300"
+                className="flex items-center space-x-1.5 text-xs font-bold uppercase tracking-wider text-red-400 hover:text-red-300"
               >
                 <Edit2 className="w-3.5 h-3.5" />
                 <span>Edit Specs</span>
@@ -830,7 +830,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl max-w-2xl w-full p-6 shadow-2xl my-8">
             <div className="flex items-center justify-between pb-4 border-b border-zinc-800 mb-6">
               <h2 className="text-base font-bold text-white uppercase tracking-wider flex items-center space-x-2">
-                <Palette className="w-5 h-5 text-blue-500" />
+                <Palette className="w-5 h-5 text-red-500" />
                 <span>{isCreating ? 'Create New Design Preset' : `Edit Preset: ${editingPreset.code}`}</span>
               </h2>
               <button
@@ -856,7 +856,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                     required
                     value={editingPreset.code}
                     onChange={(e) => setEditingPreset({ ...editingPreset, code: e.target.value.toUpperCase() })}
-                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-blue-500 text-xs font-mono"
+                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-red-500 text-xs font-mono"
                     placeholder="e.g. SJ-Y5EMT or BARCELONA 2016-17"
                   />
                 </div>
@@ -870,7 +870,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                     required
                     value={editingPreset.teamName}
                     onChange={(e) => setEditingPreset({ ...editingPreset, teamName: e.target.value })}
-                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-blue-500 text-xs font-mono"
+                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-red-500 text-xs font-mono"
                     placeholder="e.g. AC Milan"
                   />
                 </div>
@@ -882,7 +882,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                   <select
                     value={editingPreset.league}
                     onChange={(e) => setEditingPreset({ ...editingPreset, league: e.target.value })}
-                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-blue-500 text-xs font-mono"
+                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-red-500 text-xs font-mono"
                   >
                     {leagues.filter((l) => l !== 'All').map((lg) => (
                       <option key={lg} value={lg}>
@@ -900,7 +900,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                     type="text"
                     value={editingPreset.season}
                     onChange={(e) => setEditingPreset({ ...editingPreset, season: e.target.value })}
-                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-blue-500 text-xs font-mono"
+                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-red-500 text-xs font-mono"
                     placeholder="e.g. 2024-25 or Classic"
                   />
                 </div>
@@ -908,7 +908,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
 
               {/* Font Selector & Custom Font Upload */}
               <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800">
-                <h3 className="text-[10px] font-bold text-blue-400 uppercase tracking-wider mb-3 flex items-center space-x-1.5">
+                <h3 className="text-[10px] font-bold text-red-400 uppercase tracking-wider mb-3 flex items-center space-x-1.5">
                   <Type className="w-4 h-4" />
                   <span>Font Specification & Cloudflare R2 Upload</span>
                 </h3>
@@ -921,7 +921,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       type="text"
                       value={editingPreset.fontFamily}
                       onChange={(e) => setEditingPreset({ ...editingPreset, fontFamily: e.target.value })}
-                      className="w-full bg-zinc-900 text-white px-3 py-2 rounded border border-zinc-800 focus:border-blue-500 text-xs font-mono"
+                      className="w-full bg-zinc-900 text-white px-3 py-2 rounded border border-zinc-800 focus:border-red-500 text-xs font-mono"
                       placeholder="e.g. Oswald, Bebas Neue, Impact"
                     />
                   </div>
@@ -934,7 +934,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       type="file"
                       accept=".ttf,.woff,.woff2,.otf"
                       onChange={handleCustomFontUpload}
-                      className="text-xs text-zinc-400 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[10px] file:font-bold file:uppercase file:bg-blue-600/10 file:text-blue-400 hover:file:bg-blue-600/20"
+                      className="text-xs text-zinc-400 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[10px] file:font-bold file:uppercase file:bg-red-600/10 file:text-red-400 hover:file:bg-red-600/20"
                     />
                   </div>
                 </div>
@@ -947,21 +947,21 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
               </div>
 
               {/* Smart Bulk Folder & Multi-File Auto-Importer */}
-              <div className="bg-gradient-to-r from-blue-950/40 via-zinc-900 to-indigo-950/40 p-4 rounded-xl border border-blue-500/30 space-y-3 shadow-lg">
+              <div className="bg-gradient-to-r from-red-950/40 via-zinc-900 to-zinc-900/40 p-4 rounded-xl border border-red-500/30 space-y-3 shadow-lg">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-xs font-bold text-blue-300 uppercase tracking-wider flex items-center space-x-2">
-                      <FolderUp className="w-4 h-4 text-blue-400" />
+                    <h3 className="text-xs font-bold text-red-300 uppercase tracking-wider flex items-center space-x-2">
+                      <FolderUp className="w-4 h-4 text-red-400" />
                       <span>Bulk Folder / Multi-File Auto-Importer</span>
                     </h3>
                     <p className="text-[11px] text-zinc-400 font-mono mt-0.5">
-                      Upload an entire folder or select multiple images for Numbers (0-9) and Letters (A-Z). Files like <span className="text-blue-300 font-bold">0.png–9.png</span> auto-map to digits and <span className="text-blue-300 font-bold">A.png–Z.png</span> auto-map to name letters!
+                      Upload an entire folder or select multiple images for Numbers (0-9) and Letters (A-Z). Files like <span className="text-red-300 font-bold">0.png–9.png</span> auto-map to digits and <span className="text-red-300 font-bold">A.png–Z.png</span> auto-map to name letters!
                     </p>
                   </div>
 
                   {/* Master upload action buttons */}
                   <div className="flex items-center space-x-2 shrink-0">
-                    <label className="cursor-pointer px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold uppercase tracking-wider rounded shadow-md flex items-center space-x-1.5 transition-all">
+                    <label className="cursor-pointer px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold uppercase tracking-wider rounded shadow-md flex items-center space-x-1.5 transition-all">
                       <Folder className="w-3.5 h-3.5" />
                       <span>📁 Upload Folder</span>
                       <input
@@ -976,7 +976,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                     </label>
 
                     <label className="cursor-pointer px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-[10px] font-bold uppercase tracking-wider rounded shadow-md flex items-center space-x-1.5 transition-all">
-                      <Files className="w-3.5 h-3.5 text-blue-400" />
+                      <Files className="w-3.5 h-3.5 text-red-400" />
                       <span>🗂️ Select Files</span>
                       <input
                         type="file"
@@ -998,7 +998,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                     <div className="flex items-center justify-between text-[11px]">
                       <div className="flex items-center space-x-2">
                         {bulkUploadProgress.status === 'processing' && (
-                          <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                          <Loader2 className="w-3.5 h-3.5 text-red-400 animate-spin" />
                         )}
                         {bulkUploadProgress.status === 'done' && (
                           <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
@@ -1020,7 +1020,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
                         <div
                           className={`h-full transition-all duration-200 ${
-                            bulkUploadProgress.status === 'done' ? 'bg-emerald-500' : 'bg-blue-500'
+                            bulkUploadProgress.status === 'done' ? 'bg-emerald-500' : 'bg-red-500'
                           }`}
                           style={{
                             width: `${(bulkUploadProgress.currentFileIndex / bulkUploadProgress.totalFiles) * 100}%`,
@@ -1031,7 +1031,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
 
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-zinc-400 pt-1">
                       <div className="flex items-center space-x-3">
-                        <span className="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/50">
+                        <span className="px-2 py-0.5 rounded bg-red-950 text-red-300 border border-red-800/50">
                           🔢 Numbers Mapped: <strong>{bulkUploadProgress.matchedNumbers}</strong>
                         </span>
                         <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/50">
@@ -1053,7 +1053,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
               <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
                   <div>
-                    <h3 className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center space-x-2">
+                    <h3 className="text-xs font-bold text-red-400 uppercase tracking-wider flex items-center space-x-2">
                       <FileImage className="w-4 h-4" />
                       <span>Upload Number PNG Assets (0-9) to Cloudflare R2</span>
                     </h3>
@@ -1063,7 +1063,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                   </div>
                   <div className="flex items-center flex-wrap gap-2">
                     <label
-                      className="cursor-pointer px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-blue-400 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
+                      className="cursor-pointer px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-red-400 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
                       title="Upload a folder containing 0.png - 9.png"
                     >
                       <Folder className="w-3 h-3" />
@@ -1082,7 +1082,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       className="cursor-pointer px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
                       title="Select multiple digit files (0-9)"
                     >
-                      <Files className="w-3 h-3 text-blue-400" />
+                      <Files className="w-3 h-3 text-red-400" />
                       <span>Files</span>
                       <input
                         type="file"
@@ -1101,7 +1101,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
                       title="Auto-generate matching sample vector number graphics for digits 0-9"
                     >
-                      <Sparkles className="w-3 h-3 text-blue-400" />
+                      <Sparkles className="w-3 h-3 text-red-400" />
                       <span>Sample 0-9</span>
                     </button>
                     {editingPreset.numberAssets && Object.keys(editingPreset.numberAssets).length > 0 && (
@@ -1124,7 +1124,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       <div
                         key={digit}
                         className={`relative group bg-zinc-900 border ${
-                          hasAsset ? 'border-blue-500/50' : 'border-zinc-800 hover:border-zinc-700'
+                          hasAsset ? 'border-red-500/50' : 'border-zinc-800 hover:border-zinc-700'
                         } rounded p-1.5 flex flex-col items-center justify-between min-h-[90px] transition-all`}
                       >
                         <span className="text-[10px] font-mono font-bold text-zinc-400 bg-zinc-950 px-1.5 py-0.2 rounded border border-zinc-800">
@@ -1133,7 +1133,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
 
                         <div className="my-1 flex items-center justify-center h-9 w-full">
                           {isUploadingThis ? (
-                            <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
+                            <Loader2 className="w-4 h-4 text-red-400 animate-spin" />
                           ) : hasAsset ? (
                             <img
                               src={hasAsset}
@@ -1146,7 +1146,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                         </div>
 
                         <div className="flex items-center space-x-1 w-full justify-center">
-                          <label className="cursor-pointer text-[9px] font-bold uppercase bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30 transition-all text-center w-full truncate">
+                          <label className="cursor-pointer text-[9px] font-bold uppercase bg-red-600/20 hover:bg-red-600/30 text-red-400 px-1.5 py-0.5 rounded border border-red-500/30 transition-all text-center w-full truncate">
                             {hasAsset ? 'Change' : '+ R2'}
                             <input
                               type="file"
@@ -1176,7 +1176,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
               <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
                   <div>
-                    <h3 className="text-xs font-bold text-blue-400 uppercase tracking-wider flex items-center space-x-2">
+                    <h3 className="text-xs font-bold text-red-400 uppercase tracking-wider flex items-center space-x-2">
                       <ImageIcon className="w-4 h-4" />
                       <span>Upload Letter PNG Assets (A-Z) to Cloudflare R2</span>
                     </h3>
@@ -1186,7 +1186,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                   </div>
                   <div className="flex items-center flex-wrap gap-2">
                     <label
-                      className="cursor-pointer px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-blue-400 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
+                      className="cursor-pointer px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-red-400 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
                       title="Upload a folder containing A.png - Z.png"
                     >
                       <Folder className="w-3 h-3" />
@@ -1205,7 +1205,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       className="cursor-pointer px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
                       title="Select multiple letter files (A-Z)"
                     >
-                      <Files className="w-3 h-3 text-blue-400" />
+                      <Files className="w-3 h-3 text-red-400" />
                       <span>Files</span>
                       <input
                         type="file"
@@ -1224,7 +1224,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
                       title="Auto-generate sample A-Z vector letter graphics"
                     >
-                      <Sparkles className="w-3 h-3 text-blue-400" />
+                      <Sparkles className="w-3 h-3 text-red-400" />
                       <span>Sample A-Z</span>
                     </button>
                     {editingPreset.letterAssets && Object.keys(editingPreset.letterAssets).length > 0 && (
@@ -1247,7 +1247,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       <div
                         key={letter}
                         className={`relative group bg-zinc-900 border ${
-                          hasAsset ? 'border-blue-500/50' : 'border-zinc-800 hover:border-zinc-700'
+                          hasAsset ? 'border-red-500/50' : 'border-zinc-800 hover:border-zinc-700'
                         } rounded p-1 flex flex-col items-center justify-between min-h-[75px] transition-all`}
                       >
                         <span className="text-[9px] font-mono font-bold text-zinc-400 bg-zinc-950 px-1 rounded border border-zinc-800">
@@ -1256,7 +1256,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
 
                         <div className="my-0.5 flex items-center justify-center h-6 w-full">
                           {isUploadingThis ? (
-                            <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
+                            <Loader2 className="w-3 h-3 text-red-400 animate-spin" />
                           ) : hasAsset ? (
                             <img
                               src={hasAsset}
@@ -1269,7 +1269,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                         </div>
 
                         <div className="flex items-center space-x-1 w-full justify-center">
-                          <label className="cursor-pointer text-[8px] font-bold uppercase bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 px-1 py-0.5 rounded border border-blue-500/30 transition-all text-center w-full truncate">
+                          <label className="cursor-pointer text-[8px] font-bold uppercase bg-red-600/20 hover:bg-red-600/30 text-red-400 px-1 py-0.5 rounded border border-red-500/30 transition-all text-center w-full truncate">
                             {hasAsset ? 'Edit' : '+R2'}
                             <input
                               type="file"
@@ -1373,7 +1373,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
 
                 {editingPreset.textEffect === 'arc' && (
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-blue-400 mb-1">
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-red-400 mb-1">
                       Arc Curve Angle: <strong>{editingPreset.arcAmount || 15}°</strong>
                     </label>
                     <input
@@ -1384,7 +1384,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       onChange={(e) =>
                         setEditingPreset({ ...editingPreset, arcAmount: parseInt(e.target.value) || 15 })
                       }
-                      className="w-full accent-blue-500 cursor-pointer my-1"
+                      className="w-full accent-red-500 cursor-pointer my-1"
                     />
                   </div>
                 )}
@@ -1403,7 +1403,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                     onChange={(e) =>
                       setEditingPreset({ ...editingPreset, defaultNameWidthInches: parseFloat(e.target.value) || 12.0 })
                     }
-                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-blue-500 text-xs font-mono"
+                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-red-500 text-xs font-mono"
                   />
                 </div>
 
@@ -1418,7 +1418,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                     onChange={(e) =>
                       setEditingPreset({ ...editingPreset, defaultNameHeightInches: parseFloat(e.target.value) || 2.2 })
                     }
-                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-blue-500 text-xs font-mono"
+                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-red-500 text-xs font-mono"
                   />
                 </div>
 
@@ -1433,7 +1433,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                     onChange={(e) =>
                       setEditingPreset({ ...editingPreset, defaultNumberHeightInches: parseFloat(e.target.value) || 9.5 })
                     }
-                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-blue-500 text-xs font-mono"
+                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-red-500 text-xs font-mono"
                   />
                 </div>
 
@@ -1448,7 +1448,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                     onChange={(e) =>
                       setEditingPreset({ ...editingPreset, letterSpacing: parseFloat(e.target.value) || 0 })
                     }
-                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-blue-500 text-xs font-mono"
+                    className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-red-500 text-xs font-mono"
                   />
                 </div>
               </div>
@@ -1461,7 +1461,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                   type="text"
                   value={editingPreset.notes || ''}
                   onChange={(e) => setEditingPreset({ ...editingPreset, notes: e.target.value })}
-                  className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-blue-500 text-xs font-mono placeholder:text-zinc-600"
+                  className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-zinc-800 focus:border-red-500 text-xs font-mono placeholder:text-zinc-600"
                   placeholder="e.g. Official club font specification"
                 />
               </div>
@@ -1480,7 +1480,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                 <button
                   type="submit"
                   disabled={isSavingCloud}
-                  className="px-6 py-2 bg-blue-600 text-white font-bold uppercase tracking-wider rounded shadow-lg shadow-blue-900/20 hover:bg-blue-500 text-xs flex items-center space-x-2 disabled:opacity-50"
+                  className="px-6 py-2 bg-red-600 text-white font-bold uppercase tracking-wider rounded shadow-lg shadow-red-900/20 hover:bg-red-500 text-xs flex items-center space-x-2 disabled:opacity-50"
                 >
                   {isSavingCloud ? (
                     <>

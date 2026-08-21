@@ -823,7 +823,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
             onClick={() => setLayoutSettings({ ...layoutSettings, showCutLines: !layoutSettings.showCutLines })}
             className={`flex items-center space-x-1.5 text-xs font-semibold uppercase tracking-wider px-3 py-1.5 rounded transition-all ${
               layoutSettings.showCutLines
-                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                ? 'bg-red-600/20 text-red-400 border border-red-500/30'
                 : 'bg-zinc-950 text-zinc-400 border border-zinc-800'
             }`}
           >
@@ -836,7 +836,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         <div className="flex items-center space-x-2">
           <button
             onClick={handleRePack}
-            className="flex items-center space-x-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wider rounded shadow-lg shadow-blue-900/20 transition-all"
+            className="flex items-center space-x-2 px-4 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold uppercase tracking-wider rounded shadow-lg shadow-red-900/20 transition-all"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             <span>Auto Re-Nest Sheet</span>
@@ -882,11 +882,11 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
             <span className="text-amber-500/80 font-bold flex items-center space-x-1">
               <span>◄ WEST PASTEBOARD (-10")</span>
             </span>
-            <span className="text-blue-400 font-bold bg-blue-600/10 px-2 py-0.5 rounded border border-blue-500/30">
+            <span className="text-red-400 font-bold bg-red-600/10 px-2 py-0.5 rounded border border-red-500/30">
               0.0" (LEFT SHEET EDGE)
             </span>
             <span className="text-zinc-300">19.5" (SHEET CENTER)</span>
-            <span className="text-blue-400 font-bold bg-blue-600/10 px-2 py-0.5 rounded border border-blue-500/30">
+            <span className="text-red-400 font-bold bg-red-600/10 px-2 py-0.5 rounded border border-red-500/30">
               39.0" (RIGHT SHEET EDGE)
             </span>
             <span className="text-amber-500/80 font-bold flex items-center space-x-1">
@@ -909,7 +909,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
           </div>
 
           <p className="text-xs text-zinc-500 mt-3 flex items-center space-x-2 font-mono">
-            <BoxSelect className="w-3.5 h-3.5 text-blue-400" />
+            <BoxSelect className="w-3.5 h-3.5 text-red-400" />
             <span>Illustrator Pasteboard Workspace: Park extra items outside the 39" sheet box, or drag items into the active sheet.</span>
           </p>
         </div>
@@ -920,11 +920,11 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
           <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-5 shadow-xl">
             <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center justify-between mb-4 border-b border-zinc-800 pb-3">
               <span className="flex items-center space-x-2">
-                <Sliders className="w-4 h-4 text-blue-400" />
+                <Sliders className="w-4 h-4 text-red-400" />
                 <span>Adobe Element Inspector</span>
               </span>
               {selectedItemIds.length > 0 && (
-                <span className="text-[10px] font-mono px-2 py-0.5 bg-blue-600/10 text-blue-400 border border-blue-500/30 rounded font-bold">
+                <span className="text-[10px] font-mono px-2 py-0.5 bg-red-600/10 text-red-400 border border-red-500/30 rounded font-bold">
                   {selectedItemIds.length} SELECTED
                 </span>
               )}
@@ -938,7 +938,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                   <div className="text-lg font-black text-white tracking-wide uppercase">
                     {singleSelectedItem.itemType === 'name' ? singleSelectedItem.customerName : singleSelectedItem.number}
                   </div>
-                  <div className="text-xs text-blue-400 font-mono mt-1">
+                  <div className="text-xs text-red-400 font-mono mt-1">
                     Design Code: {singleSelectedItem.designCode}
                   </div>
                 </div>
@@ -947,7 +947,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                 <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800 space-y-2">
                   <div className="flex items-center justify-between text-xs font-mono">
                     <span className="text-zinc-400 uppercase text-[10px] font-bold">Free Angle Rotation:</span>
-                    <strong className="text-blue-400">{singleSelectedItem.rotation || 0}°</strong>
+                    <strong className="text-red-400">{singleSelectedItem.rotation || 0}°</strong>
                   </div>
 
                   <input
@@ -957,7 +957,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                     step="1"
                     value={singleSelectedItem.rotation || 0}
                     onChange={(e) => handleSetSelectedRotation(parseInt(e.target.value) || 0)}
-                    className="w-full accent-blue-500 cursor-pointer"
+                    className="w-full accent-red-500 cursor-pointer"
                   />
 
                   <div className="grid grid-cols-4 gap-1 pt-1">
@@ -967,7 +967,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                         onClick={() => handleSetSelectedRotation(angle)}
                         className={`py-1 text-[10px] font-mono font-bold rounded border ${
                           singleSelectedItem.rotation === angle
-                            ? 'bg-blue-600 text-white border-blue-500'
+                            ? 'bg-red-600 text-white border-red-500'
                             : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
                         }`}
                       >
@@ -1331,7 +1331,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
           <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-5 shadow-xl font-mono text-xs space-y-3">
             <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2 flex items-center justify-between">
               <span>DTF Roll Print Stats</span>
-              <span className="text-blue-400">39" Width</span>
+              <span className="text-red-400">39" Width</span>
             </h3>
 
             <div className="grid grid-cols-2 gap-3">
@@ -1361,7 +1361,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
               </div>
               <div className="flex justify-between">
                 <span>Est. Print Time:</span>
-                <strong className="text-blue-400">~{metrics.estimatedPrintTimeMinutes} Mins</strong>
+                <strong className="text-red-400">~{metrics.estimatedPrintTimeMinutes} Mins</strong>
               </div>
               <div className="flex justify-between border-t border-zinc-800 pt-1.5 mt-1.5">
                 <span>Est. Film Cost:</span>

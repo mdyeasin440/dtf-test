@@ -113,7 +113,7 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold tracking-tighter text-white uppercase flex items-center space-x-2">
-            <FileText className="w-6 h-6 text-blue-500" />
+            <FileText className="w-6 h-6 text-red-500" />
             <span>Bulk Order Data Input</span>
           </h1>
           <p className="text-xs text-zinc-400 mt-1 font-mono">
@@ -137,7 +137,7 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() => handleLoadSample(SAMPLE_BATCH_1)}
-                  className="text-xs font-semibold px-2.5 py-1 bg-blue-600/10 text-blue-400 border border-blue-500/30 rounded hover:bg-blue-600/20 transition-all uppercase tracking-wider text-[10px]"
+                  className="text-xs font-semibold px-2.5 py-1 bg-red-600/10 text-red-400 border border-red-500/30 rounded hover:bg-red-600/20 transition-all uppercase tracking-wider text-[10px]"
                 >
                   Load Sample 1
                 </button>
@@ -177,7 +177,7 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
 
               <div className="flex items-center space-x-2">
                 <label className="flex items-center space-x-1 text-zinc-400 hover:text-white cursor-pointer text-xs">
-                  <Upload className="w-3.5 h-3.5 text-blue-400" />
+                  <Upload className="w-3.5 h-3.5 text-red-400" />
                   <span>Import CSV/TXT</span>
                   <input type="file" accept=".txt,.csv" onChange={handleFileUpload} className="hidden" />
                 </label>
@@ -186,7 +186,7 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
                     setRawText('');
                     setParsedOrders([]);
                   }}
-                  className="text-zinc-500 hover:text-blue-400 p-1"
+                  className="text-zinc-500 hover:text-red-400 p-1"
                   title="Clear Input"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -207,7 +207,7 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
                   onClick={() => setDefaultGarmentSize(sz)}
                   className={`p-3 rounded-lg border text-center transition-all ${
                     defaultGarmentSize === sz
-                      ? 'bg-blue-600/10 border-blue-500/30 text-blue-400 font-bold'
+                      ? 'bg-red-600/10 border-red-500/30 text-red-400 font-bold'
                       : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
                   }`}
                 >
@@ -227,7 +227,7 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
             <div>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-2">
-                  <ListFilter className="w-4 h-4 text-blue-400" />
+                  <ListFilter className="w-4 h-4 text-red-400" />
                   <span>Parsed Orders Table ({parsedOrders.length})</span>
                 </h3>
 
@@ -264,7 +264,7 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
                           <td className="p-3 text-zinc-500">{idx + 1}</td>
                           <td className="p-3 font-bold">
                             {ord.status === 'matched' ? (
-                              <span className="text-blue-400">{ord.designCode}</span>
+                              <span className="text-red-400">{ord.designCode}</span>
                             ) : (
                               <select
                                 value={ord.designCode}
@@ -273,15 +273,15 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
                               >
                                 <option value="">Select Code...</option>
                                 {presets.map((p) => (
-                                  <option key={p.id} value={p.code}>
-                                    {p.code} ({p.teamName})
-                                  </option>
+                                   <option key={p.id} value={p.code}>
+                                     {p.code} ({p.teamName})
+                                   </option>
                                 ))}
                               </select>
                             )}
                           </td>
                           <td className="p-3 text-white font-bold tracking-wider uppercase">{ord.customerName}</td>
-                          <td className="p-3 text-blue-500 font-black text-sm">{ord.number}</td>
+                          <td className="p-3 text-red-500 font-black text-sm">{ord.number}</td>
                           <td className="p-3 text-zinc-400">{ord.garmentSize}</td>
                           <td className="p-3 text-zinc-400 text-[11px]">
                             {ord.nameWidthInches}" x {ord.nameHeightInches}" Name
@@ -316,7 +316,7 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
                 onClick={() => onGenerateLayout(parsedOrders)}
                 className={`w-full py-3 px-6 rounded-lg font-bold text-xs uppercase tracking-wider flex items-center justify-center space-x-3 transition-all ${
                   parsedOrders.length > 0
-                    ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/30 cursor-pointer'
+                    ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/30 cursor-pointer'
                     : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
                 }`}
               >

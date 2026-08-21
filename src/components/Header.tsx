@@ -32,10 +32,10 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center justify-between h-16">
           {/* Logo & Brand */}
           <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('bulk')}>
-            <div className="w-9 h-9 rounded-lg bg-zinc-900 border border-blue-500/40 p-0.5 shadow-[0_0_12px_rgba(37,99,235,0.3)] flex items-center justify-center">
+            <div className="w-9 h-9 rounded-lg bg-zinc-900 border border-red-500/40 p-0.5 shadow-[0_0_12px_rgba(239,68,68,0.3)] flex items-center justify-center">
               <div className="w-full h-full bg-zinc-950 rounded flex items-center justify-center relative">
-                <Printer className="w-4 h-4 text-blue-500" />
-                <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-600 shadow-[0_0_8px_rgba(37,99,235,0.8)]"></span>
+                <Printer className="w-4 h-4 text-red-500" />
+                <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-600 shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
               </div>
             </div>
             <div>
@@ -43,7 +43,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="font-black tracking-tighter text-lg text-white uppercase">
                   SPIDEY JERSEY
                 </span>
-                <span className="text-[10px] font-mono tracking-widest px-2 py-0.5 bg-blue-600/10 text-blue-400 border border-blue-500/30 rounded">
+                <span className="text-[10px] font-mono tracking-widest px-2 py-0.5 bg-red-600/10 text-red-400 border border-red-500/30 rounded">
                   DTF PRO v2.4
                 </span>
               </div>
@@ -59,7 +59,7 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => setActiveTab('bulk')}
               className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
                 activeTab === 'bulk'
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'
+                  ? 'bg-red-600 text-white shadow-lg shadow-red-900/30'
                   : 'text-zinc-400 hover:text-white hover:bg-zinc-800/80'
               }`}
             >
@@ -76,7 +76,7 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => setActiveTab('canvas')}
               className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
                 activeTab === 'canvas'
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'
+                  ? 'bg-red-600 text-white shadow-lg shadow-red-900/30'
                   : 'text-zinc-400 hover:text-white hover:bg-zinc-800/80'
               }`}
             >
@@ -88,7 +88,7 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => setActiveTab('database')}
               className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
                 activeTab === 'database'
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'
+                  ? 'bg-red-600 text-white shadow-lg shadow-red-900/30'
                   : 'text-zinc-400 hover:text-white hover:bg-zinc-800/80'
               }`}
             >
@@ -103,7 +103,7 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => setActiveTab('export')}
               className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
                 activeTab === 'export'
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'
+                  ? 'bg-red-600 text-white shadow-lg shadow-red-900/30'
                   : 'text-zinc-300 hover:text-white hover:bg-zinc-800/80'
               }`}
             >
@@ -115,7 +115,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Quick Metrics Badge */}
           <div className="hidden lg:flex items-center space-x-3 text-xs font-mono bg-zinc-950 px-3 py-1.5 rounded-xl border border-zinc-800">
             <div className="flex items-center space-x-1.5 text-zinc-300">
-              <Ruler className="w-3.5 h-3.5 text-blue-400" />
+              <Ruler className="w-3.5 h-3.5 text-red-400" />
               <span>
                 39" x <strong className="text-white">{metrics.totalRollLengthInches}"</strong>
               </span>

@@ -301,7 +301,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         {/* Title */}
         <div className="flex items-center justify-between pb-6 border-b border-zinc-800">
           <div className="flex items-center space-x-3">
-            <div className="p-3 bg-blue-600/10 text-blue-500 border border-blue-500/30 rounded-xl">
+            <div className="p-3 bg-red-600/10 text-red-500 border border-red-500/30 rounded-xl">
               <Printer className="w-8 h-8" />
             </div>
             <div>
@@ -325,7 +325,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
           <div className="space-y-1">
             <span className="text-zinc-500 text-[10px] uppercase">Total Sheet Items</span>
-            <div className="text-blue-400 font-bold text-base">
+            <div className="text-red-400 font-bold text-base">
               {metrics.totalNamesCount} Names + {metrics.totalNumbersCount} Numbers
             </div>
             <div className="text-zinc-500 text-[10px]">{orders.length} Customer Orders</div>
@@ -340,9 +340,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
         {/* Progress Bar during Rendering */}
         {rendering && (
-          <div className="bg-zinc-950 p-6 rounded-lg border border-blue-500/30 space-y-3">
+          <div className="bg-zinc-950 p-6 rounded-lg border border-red-500/30 space-y-3">
             <div className="flex items-center justify-between text-xs font-mono">
-              <span className="text-blue-400 font-bold flex items-center space-x-2">
+              <span className="text-red-400 font-bold flex items-center space-x-2">
                 <Sparkles className="w-4 h-4 animate-spin" />
                 <span>{renderStatus}</span>
               </span>
@@ -350,7 +350,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             </div>
             <div className="w-full bg-zinc-900 rounded-full h-3 overflow-hidden border border-zinc-800">
               <div
-                className="bg-blue-600 h-full transition-all duration-300 rounded-full"
+                className="bg-red-600 h-full transition-all duration-300 rounded-full"
                 style={{ width: `${progress}%` }}
               />
             </div>
@@ -370,7 +370,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           {/* PNG Export */}
           <div className="bg-zinc-950 p-6 rounded-xl border border-zinc-800 hover:border-zinc-700 transition-all flex flex-col justify-between space-y-4">
             <div>
-              <div className="p-3 bg-blue-600/10 text-blue-400 border border-blue-500/30 rounded-lg w-fit mb-3">
+              <div className="p-3 bg-red-600/10 text-red-400 border border-red-500/30 rounded-lg w-fit mb-3">
                 <FileImage className="w-6 h-6" />
               </div>
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">300 DPI Roll PNG</h3>
@@ -382,7 +382,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             <button
               disabled={rendering || canvasItems.length === 0}
               onClick={handleExportPNG}
-              className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-blue-900/20 transition-all flex items-center justify-center space-x-2"
+              className="w-full py-3 px-4 bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-red-900/20 transition-all flex items-center justify-center space-x-2"
             >
               {exportType === 'png' ? (
                 <>
@@ -399,9 +399,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           </div>
 
           {/* Bulk Individual PNG Assets ZIP Package */}
-          <div className="bg-zinc-950 p-6 rounded-xl border border-cyan-500/30 hover:border-cyan-500/50 transition-all flex flex-col justify-between space-y-4">
+          <div className="bg-zinc-950 p-6 rounded-xl border border-rose-500/30 hover:border-rose-500/50 transition-all flex flex-col justify-between space-y-4">
             <div>
-              <div className="p-3 bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 rounded-lg w-fit mb-3">
+              <div className="p-3 bg-rose-500/10 text-rose-400 border border-rose-500/30 rounded-lg w-fit mb-3">
                 <Archive className="w-6 h-6" />
               </div>
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">Bulk Individual PNG Assets (ZIP)</h3>
@@ -413,7 +413,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             <button
               disabled={rendering || canvasItems.length === 0}
               onClick={handleExportIndividualZip}
-              className="w-full py-3 px-4 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-cyan-900/20 transition-all flex items-center justify-center space-x-2"
+              className="w-full py-3 px-4 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-rose-900/20 transition-all flex items-center justify-center space-x-2"
             >
               {exportType === 'zip' ? (
                 <>
@@ -464,7 +464,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           <div className="bg-zinc-950 p-6 rounded-xl border border-zinc-800 hover:border-zinc-700 transition-all flex flex-col justify-between space-y-4">
             <div>
               <div className="p-3 bg-zinc-900 text-zinc-300 border border-zinc-800 rounded-lg w-fit mb-3">
-                <Scissors className="w-6 h-6 text-blue-400" />
+                <Scissors className="w-6 h-6 text-red-400" />
               </div>
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">Production Sorting Slip</h3>
               <p className="text-xs text-zinc-400 font-mono mt-1">
@@ -476,7 +476,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               onClick={handleExportJobSummary}
               className="w-full py-3 px-4 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 text-xs font-bold uppercase tracking-wider rounded-lg border border-zinc-800 transition-all flex items-center justify-center space-x-2"
             >
-              <Printer className="w-4 h-4 text-blue-400" />
+              <Printer className="w-4 h-4 text-red-400" />
               <span>Print Sorting Manifest</span>
             </button>
           </div>
