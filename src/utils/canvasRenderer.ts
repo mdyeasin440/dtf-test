@@ -1,4 +1,5 @@
 import { CanvasItem, LayoutSettings } from '../types';
+import { getCachedAssetAspectRatio, registerAssetAspectRatio } from './textMeasurement';
 
 export function renderItemToCanvas(
   ctx: CanvasRenderingContext2D,
@@ -333,13 +334,19 @@ function getLoadedImage(url: string): HTMLImageElement | null {
 
   if (imageCache.has(url)) {
     const img = imageCache.get(url)!;
-    if (img.complete && img.naturalWidth > 0) return img;
+    if (img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+      registerAssetAspectRatio(url, img.naturalWidth / img.naturalHeight);
+      return img;
+    }
     return img;
   }
 
   const img = new Image();
   img.crossOrigin = 'anonymous';
   img.onload = () => {
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      registerAssetAspectRatio(url, img.naturalWidth / img.naturalHeight);
+    }
     notifyImageLoaded();
   };
   img.onerror = () => {
@@ -347,6 +354,9 @@ function getLoadedImage(url: string): HTMLImageElement | null {
     if (img.crossOrigin) {
       const retryImg = new Image();
       retryImg.onload = () => {
+        if (retryImg.naturalWidth > 0 && retryImg.naturalHeight > 0) {
+          registerAssetAspectRatio(url, retryImg.naturalWidth / retryImg.naturalHeight);
+        }
         imageCache.set(url, retryImg);
         notifyImageLoaded();
       };
@@ -378,29 +388,63 @@ function renderNumberText(
     digits.every((d) => Boolean(numberAssets[d]));
 
   if (hasCustomAssets) {
-    // Render using uploaded 0-9 PNG assets
+    // Render using uploaded 0-9 PNG/SVG assets maintaining true individual aspect ratios
     const count = digits.length;
     const gapPx = count > 1 ? 0.03 * hPx : 0;
-    const digitWPx = (wPx - (count - 1) * gapPx) / count;
+
+    const charWidths: number[] = [];
+    let rawTotalW = 0;
+
+    digits.forEach((digitChar, i) => {
+      const assetUrl = numberAssets[digitChar];
+      const img = assetUrl ? getLoadedImage(assetUrl) : null;
+      let cW = hPx * (digitChar === '1' ? 0.28 : digitChar === '4' ? 0.55 : 0.48);
+
+      if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        cW = hPx * (img.naturalWidth / img.naturalHeight);
+      } else {
+        const cachedRatio = assetUrl ? getCachedAssetAspectRatio(assetUrl) : null;
+        if (cachedRatio) {
+          cW = hPx * cachedRatio;
+        } else if (assetUrl && assetUrl.startsWith('data:image/svg+xml')) {
+          const match = assetUrl.match(/viewBox=["']0 0 ([\d.]+) ([\d.]+)["']/);
+          if (match) {
+            const svgW = parseFloat(match[1]);
+            const svgH = parseFloat(match[2]);
+            if (svgW && svgH) cW = hPx * (svgW / svgH);
+          }
+        }
+      }
+
+      charWidths.push(cW);
+      rawTotalW += cW + (i < count - 1 ? gapPx : 0);
+    });
+
+    const scaleX = rawTotalW > 0 ? Math.min(wPx / rawTotalW, 1.05) : 1.0;
+    const actualTotalW = rawTotalW * scaleX;
+    const startX = Math.max(0, (wPx - actualTotalW) / 2);
 
     ctx.save();
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
+    let curX = startX;
     digits.forEach((digitChar, i) => {
+      const dW = charWidths[i] * scaleX;
       const assetUrl = numberAssets[digitChar];
       if (assetUrl) {
         const img = getLoadedImage(assetUrl);
-        const xPos = i * (digitWPx + gapPx);
         if (img && img.complete && img.naturalWidth > 0) {
-          ctx.drawImage(img, xPos, 0, digitWPx, hPx);
+          ctx.drawImage(img, curX, 0, dW, hPx);
         } else {
           // Fallback box while image loads
           ctx.fillStyle = preset.textColor || '#FFFFFF';
-          ctx.fillRect(xPos, 0, digitWPx, hPx);
+          ctx.fillRect(curX, 0, dW, hPx);
         }
       }
+      curX += dW + (gapPx * scaleX);
     });
+
     ctx.restore();
     return;
   }
