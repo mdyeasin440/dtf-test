@@ -37,6 +37,7 @@ export interface DesignPreset {
   defaultNumberHeightInches: number; // e.g. 9.5"
   notes?: string;
   updatedAt?: string;
+  isCustom?: boolean;
 }
 
 export type GarmentSize = 'Adult' | 'Youth' | 'Infant' | 'Custom';

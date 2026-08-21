@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Search,
   Plus,
@@ -98,14 +98,27 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
   // League filters
   const leagues = ['All', 'La Liga', 'Premier League', 'Serie A', 'Bundesliga', 'Ligue 1', 'MLS', 'International', 'Retro', 'Custom'];
 
-  const filteredPresets = presets.filter((p) => {
-    const matchesSearch =
-      p.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.teamName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.league.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesLeague = selectedLeague === 'All' || p.league === selectedLeague;
-    return matchesSearch && matchesLeague;
-  });
+  const filteredPresets = useMemo(() => {
+    return presets
+      .filter((p) => {
+        const matchesSearch =
+          p.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          p.teamName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          p.league.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesLeague = selectedLeague === 'All' || p.league === selectedLeague;
+        return matchesSearch && matchesLeague;
+      })
+      .sort((a, b) => {
+        const aCustom = a.league === 'Custom' || a.isCustom || (a.code && a.code.startsWith('SJ-CUSTOM'));
+        const bCustom = b.league === 'Custom' || b.isCustom || (b.code && b.code.startsWith('SJ-CUSTOM'));
+        if (aCustom && !bCustom) return -1;
+        if (!aCustom && bCustom) return 1;
+
+        const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return bTime - aTime;
+      });
+  }, [presets, searchTerm, selectedLeague]);
 
   const handleCreateNew = () => {
     const newPreset: DesignPreset = {
@@ -119,6 +132,8 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
       strokeColor: '#000000',
       strokeWidth: 4,
       textEffect: 'none',
+      isCustom: true,
+      updatedAt: new Date().toISOString(),
       numberStyle: {
         fontFamily: 'Oswald',
         fillColor: '#FFFFFF',

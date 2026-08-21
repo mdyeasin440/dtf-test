@@ -39,6 +39,33 @@ export function saveCustomPresets(customPresets: DesignPreset[]): void {
 }
 
 /**
+ * Helper to determine if a preset is a custom user-created preset
+ */
+export function isCustomPreset(p: DesignPreset): boolean {
+  if (!p) return false;
+  if (p.isCustom) return true;
+  if (p.league === 'Custom') return true;
+  if (p.code && p.code.toUpperCase().startsWith('SJ-CUSTOM')) return true;
+  return false;
+}
+
+/**
+ * Sorts presets so custom designs and recently modified presets appear at the TOP
+ */
+export function sortPresets(presets: DesignPreset[]): DesignPreset[] {
+  return [...presets].sort((a, b) => {
+    const aCustom = isCustomPreset(a);
+    const bCustom = isCustomPreset(b);
+    if (aCustom && !bCustom) return -1;
+    if (!aCustom && bCustom) return 1;
+
+    const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    return bTime - aTime;
+  });
+}
+
+/**
  * Loads presets from local storage cache first, combining defaults with all user custom designs.
  */
 export function getLocalPresets(): DesignPreset[] {
@@ -76,7 +103,7 @@ export function getLocalPresets(): DesignPreset[] {
     }
   }
 
-  return Array.from(presetMap.values());
+  return sortPresets(Array.from(presetMap.values()));
 }
 
 /**
@@ -84,11 +111,12 @@ export function getLocalPresets(): DesignPreset[] {
  */
 export function saveLocalPresets(presets: DesignPreset[]): void {
   try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(presets));
+    const sorted = sortPresets(presets);
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(sorted));
 
     // Also extract and save user custom presets
     const defaultCodes = new Set(getFullPresetDatabase().map((p) => p.code.toUpperCase()));
-    const customOnly = presets.filter((p) => !defaultCodes.has(p.code.toUpperCase()) || (p as any).isCustom);
+    const customOnly = sorted.filter((p) => !defaultCodes.has(p.code.toUpperCase()) || isCustomPreset(p));
     saveCustomPresets(customOnly);
   } catch (err) {
     console.warn('Failed to save presets to localStorage:', err);
@@ -153,7 +181,7 @@ export async function fetchPresetsFromD1(): Promise<DesignPreset[]> {
       const cloudPresets: DesignPreset[] = data.presets;
 
       const presetMap = new Map<string, DesignPreset>();
-      // 1. Add default presets
+      // 1. Add default presets first as baseline
       for (const p of defaultPresets) {
         if (p && p.code) {
           presetMap.set(p.code.toUpperCase(), p);
@@ -178,7 +206,7 @@ export async function fetchPresetsFromD1(): Promise<DesignPreset[]> {
         }
       }
 
-      const merged = Array.from(presetMap.values());
+      const merged = sortPresets(Array.from(presetMap.values()));
       saveLocalPresets(merged);
       preloadPresetFonts(merged);
 
