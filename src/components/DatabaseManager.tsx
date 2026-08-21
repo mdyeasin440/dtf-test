@@ -520,18 +520,28 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                   RONALDO
                 </div>
 
-                <div
-                  className="text-center font-black"
-                  style={{
-                    fontFamily: preset.numberStyle?.fontFamily || preset.fontFamily,
-                    color: preset.numberStyle?.fillColor || preset.textColor,
-                    WebkitTextStroke: `${(preset.numberStyle?.strokeWidth || 4) / 2}px ${preset.numberStyle?.strokeColor || preset.strokeColor}`,
-                    fontSize: '44px',
-                    lineHeight: '1',
-                  }}
-                >
-                  7
-                </div>
+                {preset.numberAssets && (preset.numberAssets['7'] || Object.values(preset.numberAssets)[0]) ? (
+                  <div className="h-12 flex items-center justify-center my-1">
+                    <img
+                      src={preset.numberAssets['7'] || Object.values(preset.numberAssets)[0]}
+                      alt="Digit Graphic"
+                      className="max-h-12 object-contain filter drop-shadow"
+                    />
+                  </div>
+                ) : (
+                  <div
+                    className="text-center font-black"
+                    style={{
+                      fontFamily: preset.numberStyle?.fontFamily || preset.fontFamily,
+                      color: preset.numberStyle?.fillColor || preset.textColor,
+                      WebkitTextStroke: `${(preset.numberStyle?.strokeWidth || 4) / 2}px ${preset.numberStyle?.strokeColor || preset.strokeColor}`,
+                      fontSize: '44px',
+                      lineHeight: '1',
+                    }}
+                  >
+                    7
+                  </div>
+                )}
               </div>
 
               {/* Specs Summary */}

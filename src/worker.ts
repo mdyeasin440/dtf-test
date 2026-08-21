@@ -110,6 +110,23 @@ function jsonResponse(data: any, status = 200) {
   });
 }
 
+// Safe JSON parser helper to prevent crashing GET /api/presets on malformed JSON
+function safeJsonParse(val: any) {
+  if (!val) return undefined;
+  if (typeof val === 'object') return val;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
 // Auto-initialize SQLite tables in D1 if they do not exist
 async function ensureD1Tables(env: Env) {
   if (!env || !env.MY_DB) {
@@ -159,6 +176,30 @@ async function ensureD1Tables(env: Env) {
         createdAt TEXT NOT NULL
       );
     `);
+
+    // Auto-migrate schema in case table was created with an earlier version
+    const alterCols = [
+      'customFontDataUrl TEXT',
+      'numberAssets TEXT',
+      'letterAssets TEXT',
+      'numberStyle TEXT',
+      'hasInnerOutline INTEGER DEFAULT 0',
+      'innerOutlineColor TEXT',
+      'textEffect TEXT DEFAULT "none"',
+      'arcAmount INTEGER DEFAULT 0',
+      'letterSpacing REAL DEFAULT 3',
+      'defaultNameWidthInches REAL DEFAULT 12.0',
+      'defaultNameHeightInches REAL DEFAULT 2.2',
+      'defaultNumberHeightInches REAL DEFAULT 9.5',
+      'notes TEXT',
+    ];
+    for (const col of alterCols) {
+      try {
+        await env.MY_DB.exec(`ALTER TABLE design_presets ADD COLUMN ${col};`);
+      } catch (_) {
+        // column already exists
+      }
+    }
   } catch (e: any) {
     console.warn('ensureD1Tables warning:', e);
   }
@@ -403,9 +444,9 @@ export default {
           const formatted = (results || []).map((row) => ({
             ...row,
             hasInnerOutline: Boolean(row.hasInnerOutline),
-            numberStyle: row.numberStyle ? JSON.parse(row.numberStyle) : undefined,
-            numberAssets: row.numberAssets ? JSON.parse(row.numberAssets) : undefined,
-            letterAssets: row.letterAssets ? JSON.parse(row.letterAssets) : undefined,
+            numberStyle: safeJsonParse(row.numberStyle),
+            numberAssets: safeJsonParse(row.numberAssets),
+            letterAssets: safeJsonParse(row.letterAssets),
           }));
 
           return jsonResponse({ success: true, presets: formatted, count: formatted.length });
