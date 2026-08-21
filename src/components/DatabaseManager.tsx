@@ -833,6 +833,28 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
         ))}
       </div>
 
+      {/* Empty State */}
+      {filteredPresets.length === 0 && (
+        <div className="text-center py-16 bg-zinc-900/30 rounded-xl border border-zinc-800 p-8 flex flex-col items-center justify-center">
+          <Palette className="w-12 h-12 text-zinc-600 mb-3" />
+          <h3 className="text-base font-bold text-zinc-300 uppercase tracking-wider mb-1">
+            {searchTerm || selectedLeague !== 'All' ? 'No Matching Presets Found' : 'No Design Presets Available'}
+          </h3>
+          <p className="text-xs text-zinc-500 font-mono max-w-md mb-6">
+            {searchTerm || selectedLeague !== 'All'
+              ? 'Try adjusting your search terms or league filter.'
+              : 'Add your custom jersey fonts, colors, and digit PNG assets by clicking the button below.'}
+          </p>
+          <button
+            onClick={handleCreateNew}
+            className="flex items-center space-x-2 px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold uppercase tracking-wider text-xs rounded-lg shadow-lg shadow-red-900/30 transition-all"
+          >
+            <Plus className="w-4 h-4" />
+            <span>+ Add Your First Design Code</span>
+          </button>
+        </div>
+      )}
+
       {/* Edit / Create Preset Modal */}
       {editingPreset && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">

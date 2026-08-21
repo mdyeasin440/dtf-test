@@ -25,28 +25,6 @@ interface BulkInputSectionProps {
   onGenerateLayout: (orders: OrderItem[]) => void;
 }
 
-const SAMPLE_BATCH_1 = `SJ-Y5EMT, KAKA, 22
-SJ-S6NGQ, MESSI, 10
-BARCELONA 2016-17, NEYMAR, 11
-REAL MADRID 2023-24, RONALDO, 7
-ARGENTINA 2022, MESSI, 10
-MAN UNITED 2008, RONALDO, 7, Adult
-INTER MIAMI 2023, MESSI, 10, Youth
-PSG 2021-22, MBAPPE, 7, Adult
-ARSENAL 2003-04, HENRY, 14, Adult
-BRAZIL 2002, RONALDINHO, 11, Adult`;
-
-const SAMPLE_BATCH_2 = `BARCELONA 2016-17, SUAREZ, 9
-REAL MADRID 2023-24, BELLINGHAM, 5
-ARGENTINA 2022, DI MARIA, 11
-LIVERPOOL 2019-20, SALAH, 11
-MAN CITY 2022-23, HAALAND, 9
-BAYERN 2019-20, LEWANDOWSKI, 9
-PORTUGAL 2016, CRISTIANO, 7
-CHELSEA 2012, DROGBA, 11
-FRANCE 2018, GRIEZMANN, 7
-DORTMUND 2012-13, REUS, 11`;
-
 export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
   presets,
   rawText,
@@ -66,9 +44,24 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
     setParsedOrders(parsed);
   };
 
-  const handleLoadSample = (sample: string) => {
-    setRawText(sample);
-    const parsed = parseBulkInput(sample, presetsMap);
+  const handleLoadSample = (sampleNum: number) => {
+    let sampleContent = '';
+    const sampleNames = ['RONALDO', 'MESSI', 'NEYMAR', 'MBAPPE', 'BELLINGHAM', 'HAALAND', 'SALAH', 'MODRIC', 'KANE', 'DE BRUYNE'];
+    const sampleNumbers = ['7', '10', '11', '9', '5', '9', '11', '10', '9', '17'];
+    
+    if (presets.length > 0) {
+      sampleContent = sampleNames.map((name, i) => {
+        const p = presets[i % presets.length];
+        const num = sampleNumbers[i % sampleNumbers.length];
+        const size = i % 4 === 2 ? ', Youth' : i % 4 === 3 ? ', Infant' : '';
+        return `${p.code}, ${name}, ${num}${size}`;
+      }).join('\n');
+    } else {
+      sampleContent = `MY-CODE-01, RONALDO, 7\nMY-CODE-01, MESSI, 10\nMY-CODE-02, NEYMAR, 11, Adult\nMY-CODE-02, MBAPPE, 7, Youth`;
+    }
+
+    setRawText(sampleContent);
+    const parsed = parseBulkInput(sampleContent, presetsMap);
     setParsedOrders(parsed);
   };
 
@@ -136,16 +129,10 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
 
               <div className="flex items-center space-x-2">
                 <button
-                  onClick={() => handleLoadSample(SAMPLE_BATCH_1)}
+                  onClick={() => handleLoadSample(1)}
                   className="text-xs font-semibold px-2.5 py-1 bg-red-600/10 text-red-400 border border-red-500/30 rounded hover:bg-red-600/20 transition-all uppercase tracking-wider text-[10px]"
                 >
-                  Load Sample 1
-                </button>
-                <button
-                  onClick={() => handleLoadSample(SAMPLE_BATCH_2)}
-                  className="text-xs font-semibold px-2.5 py-1 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded hover:bg-zinc-700 transition-all uppercase tracking-wider text-[10px]"
-                >
-                  Load Sample 2
+                  Load Sample Batch
                 </button>
               </div>
             </div>
@@ -154,7 +141,7 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
               rows={14}
               value={rawText}
               onChange={handleTextChange}
-              placeholder={`SJ-Y5EMT, KAKA, 22\nSJ-S6NGQ, MESSI, 10\nBARCELONA 2016-17, NEYMAR, 11\nREAL MADRID 2023-24, RONALDO, 7\nARGENTINA 2022, MESSI, 10`}
+              placeholder={`[DESIGN_CODE], RONALDO, 7\n[DESIGN_CODE], MESSI, 10\n[DESIGN_CODE], NEYMAR, 11, Adult\n[DESIGN_CODE], MBAPPE, 7, Youth`}
               className="w-full bg-zinc-950 text-zinc-300 font-mono text-xs p-4 rounded-lg border border-zinc-800 focus:border-zinc-600 focus:outline-none placeholder:text-zinc-600 leading-relaxed resize-none"
             />
 

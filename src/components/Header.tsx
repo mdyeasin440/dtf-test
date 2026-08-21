@@ -95,7 +95,7 @@ export const Header: React.FC<HeaderProps> = ({
               <Database className="w-4 h-4" />
               <span>Design Presets</span>
               <span className="text-[10px] font-mono px-1.5 py-0.2 bg-zinc-800 text-zinc-300 rounded border border-zinc-700">
-                {presetsCount}+
+                {presetsCount}
               </span>
             </button>
 

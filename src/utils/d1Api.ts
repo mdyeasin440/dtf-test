@@ -8,9 +8,9 @@ import { DesignPreset, OrderItem } from '../types';
 import { getFullPresetDatabase } from '../data/presets';
 import { registerCustomFont } from './fontLoader';
 
-const LOCAL_STORAGE_KEY = 'spidey_jersey_presets_v2';
-const CUSTOM_USER_PRESETS_KEY = 'spidey_user_custom_presets_v2';
-const DELETED_PRESETS_KEY = 'spidey_deleted_preset_codes_v2';
+const LOCAL_STORAGE_KEY = 'spidey_jersey_presets_v3';
+const CUSTOM_USER_PRESETS_KEY = 'spidey_user_custom_presets_v3';
+const DELETED_PRESETS_KEY = 'spidey_deleted_preset_codes_v3';
 
 /**
  * Gets the set of deleted preset codes so they never get resurrected
@@ -67,7 +67,25 @@ export function unmarkPresetDeleted(code: string): void {
 export function getSavedCustomPresets(): DesignPreset[] {
   try {
     const deletedSet = getDeletedPresetCodes();
-    const raw = localStorage.getItem(CUSTOM_USER_PRESETS_KEY);
+    let raw = localStorage.getItem(CUSTOM_USER_PRESETS_KEY);
+    
+    // Check v2 legacy store for user custom designs
+    if (!raw) {
+      const legacyRaw = localStorage.getItem('spidey_user_custom_presets_v2');
+      if (legacyRaw) {
+        const legacyParsed = JSON.parse(legacyRaw);
+        if (Array.isArray(legacyParsed)) {
+          const onlyCustom = legacyParsed.filter(
+            (p) => p && isCustomPreset(p) && p.code && !deletedSet.has(p.code.toUpperCase())
+          );
+          if (onlyCustom.length > 0) {
+            localStorage.setItem(CUSTOM_USER_PRESETS_KEY, JSON.stringify(onlyCustom));
+            raw = JSON.stringify(onlyCustom);
+          }
+        }
+      }
+    }
+
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
@@ -99,9 +117,12 @@ export function saveCustomPresets(customPresets: DesignPreset[]): void {
 export function isCustomPreset(p: DesignPreset): boolean {
   if (!p) return false;
   if (p.isCustom) return true;
-  if (p.league === 'Custom') return true;
+  if (p.league === 'Custom' || p.league === 'My Custom Designs') return true;
+  if (p.customFontDataUrl) return true;
+  if (p.letterAssets && Object.keys(p.letterAssets).length > 0) return true;
+  if (p.numberAssets && Object.keys(p.numberAssets).length > 0) return true;
   if (p.code && p.code.toUpperCase().startsWith('SJ-CUSTOM')) return true;
-  return false;
+  return true; // Now all user presets are treated as custom/user-managed
 }
 
 /**
@@ -109,35 +130,23 @@ export function isCustomPreset(p: DesignPreset): boolean {
  */
 export function sortPresets(presets: DesignPreset[]): DesignPreset[] {
   return [...presets].sort((a, b) => {
-    const aCustom = isCustomPreset(a);
-    const bCustom = isCustomPreset(b);
-    if (aCustom && !bCustom) return -1;
-    if (!aCustom && bCustom) return 1;
-
     const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
     const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-    return bTime - aTime;
+    if (bTime !== aTime) return bTime - aTime;
+    return (a.code || '').localeCompare(b.code || '');
   });
 }
 
 /**
- * Loads presets from local storage cache first, combining defaults with all user custom designs.
+ * Loads presets from local storage cache (only user-created presets).
  */
 export function getLocalPresets(): DesignPreset[] {
   const deletedSet = getDeletedPresetCodes();
-  const defaultPresets = getFullPresetDatabase();
   const customPresets = getSavedCustomPresets();
 
   const presetMap = new Map<string, DesignPreset>();
-  
-  // 1. First add all built-in defaults (skipping deleted ones)
-  for (const p of defaultPresets) {
-    if (p && p.code && !deletedSet.has(p.code.toUpperCase())) {
-      presetMap.set(p.code.toUpperCase(), p);
-    }
-  }
 
-  // 2. Also check general localStorage key
+  // Check general localStorage key
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (raw) {
@@ -154,7 +163,7 @@ export function getLocalPresets(): DesignPreset[] {
     console.warn('Failed to read presets from localStorage:', err);
   }
 
-  // 3. Guarantee user-saved custom presets take priority
+  // Guarantee user-saved custom presets take priority
   for (const p of customPresets) {
     if (p && p.code && !deletedSet.has(p.code.toUpperCase())) {
       presetMap.set(p.code.toUpperCase(), p);
@@ -173,11 +182,7 @@ export function saveLocalPresets(presets: DesignPreset[]): void {
     const active = presets.filter((p) => p && p.code && !deletedSet.has(p.code.toUpperCase()));
     const sorted = sortPresets(active);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(sorted));
-
-    // Also extract and save user custom presets
-    const defaultCodes = new Set(getFullPresetDatabase().map((p) => p.code.toUpperCase()));
-    const customOnly = sorted.filter((p) => !defaultCodes.has(p.code.toUpperCase()) || isCustomPreset(p));
-    saveCustomPresets(customOnly);
+    saveCustomPresets(sorted);
   } catch (err) {
     console.warn('Failed to save presets to localStorage:', err);
   }
@@ -243,27 +248,19 @@ export async function fetchPresetsFromD1(): Promise<DesignPreset[]> {
       }
 
       const deletedSet = getDeletedPresetCodes();
-      const defaultPresets = getFullPresetDatabase();
       const customPresets = getSavedCustomPresets();
       const cloudPresets: DesignPreset[] = data.presets;
 
       const presetMap = new Map<string, DesignPreset>();
 
-      // 2. Add default presets first as baseline (excluding deleted)
-      for (const p of defaultPresets) {
-        if (p && p.code && !deletedSet.has(p.code.toUpperCase())) {
-          presetMap.set(p.code.toUpperCase(), p);
-        }
-      }
-
-      // 3. Overwrite / append cloud presets from D1 database (cloud is primary truth, excluding deleted)
+      // 2. Add cloud presets from D1 database (excluding deleted)
       for (const p of cloudPresets) {
         if (p && p.code && !deletedSet.has(p.code.toUpperCase())) {
           presetMap.set(p.code.toUpperCase(), p);
         }
       }
 
-      // 4. Preserve local custom presets that are not deleted and not in cloud yet
+      // 3. Preserve local custom presets that are not deleted and not in cloud yet
       for (const p of customPresets) {
         if (p && p.code && !deletedSet.has(p.code.toUpperCase()) && !presetMap.has(p.code.toUpperCase())) {
           presetMap.set(p.code.toUpperCase(), p);
@@ -277,8 +274,9 @@ export async function fetchPresetsFromD1(): Promise<DesignPreset[]> {
       return merged;
     }
   } catch (err) {
-    console.warn('Cloudflare D1 fetch error, falling back to cached presets:', err);
+    console.warn('Cloudflare D1 fetch notice (fallback to local presets):', err);
   }
+
   const local = getLocalPresets();
   preloadPresetFonts(local);
   return local;
