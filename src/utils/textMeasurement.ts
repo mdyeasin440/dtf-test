@@ -32,6 +32,21 @@ export function registerAssetAspectRatio(url: string, ratio: number) {
 }
 
 /**
+ * Preloads asset images to register their exact naturalWidth / naturalHeight
+ */
+export function preloadAssetImage(url: string) {
+  if (!url || typeof Image === 'undefined' || assetAspectRatioCache.has(url)) return;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      registerAssetAspectRatio(url, img.naturalWidth / img.naturalHeight);
+    }
+  };
+  img.src = url;
+}
+
+/**
  * Calculates exact-fit tight bounding box dimensions (width and height in inches)
  * for names and numbers without any excess padding or dead space.
  */
@@ -62,16 +77,17 @@ export function calculateTightTextDimensions(
         const hasLetterAssets = chars.some((c) => c !== ' ' && Boolean(letterAssets[c]));
 
         const userSpacing = typeof preset?.letterSpacing === 'number' ? preset.letterSpacing : 3;
-        const letterGapPx = Math.max(2, userSpacing * (scaleDpi / 30));
+        const letterGapPx = Math.max(2, userSpacing * (scaleDpi / 35));
 
         if (hasLetterAssets) {
-          const spaceWidthPx = hPx * 0.22;
+          const spaceWidthPx = hPx * 0.20;
           let totalWPx = 0;
           chars.forEach((c, i) => {
             if (c === ' ') {
               totalWPx += spaceWidthPx;
             } else {
               const url = letterAssets[c];
+              if (url) preloadAssetImage(url);
               const cachedRatio = url ? getCachedAssetAspectRatio(url) : null;
               if (cachedRatio) {
                 totalWPx += hPx * cachedRatio + (i < chars.length - 1 ? letterGapPx : 0);
@@ -87,9 +103,12 @@ export function calculateTightTextDimensions(
                     return;
                   }
                 }
-                totalWPx += hPx * (c === 'I' ? 0.20 : c === 'W' || c === 'M' ? 0.70 : 0.50) + (i < chars.length - 1 ? letterGapPx : 0);
+                const defaultRatio = c === 'I' ? 0.18 : c === 'W' || c === 'M' ? 0.52 : c === 'J' || c === 'L' ? 0.30 : 0.35;
+                totalWPx += hPx * defaultRatio + (i < chars.length - 1 ? letterGapPx : 0);
               } else {
-                totalWPx += hPx * (c === 'I' ? 0.20 : c === 'W' || c === 'M' ? 0.70 : 0.50) + (i < chars.length - 1 ? letterGapPx : 0);
+                // Typical condensed athletic jersey letter aspect ratio (tight bounding box)
+                const defaultRatio = c === 'I' ? 0.18 : c === 'W' || c === 'M' ? 0.52 : c === 'J' || c === 'L' ? 0.30 : 0.35;
+                totalWPx += hPx * defaultRatio + (i < chars.length - 1 ? letterGapPx : 0);
               }
             }
           });
@@ -98,7 +117,7 @@ export function calculateTightTextDimensions(
         } else {
           // Standard vector font measurement
           const fontSize = hPx * 0.95;
-          ctx.font = `700 ${fontSize}px "${fontName}", "Oswald", "Bebas Neue", sans-serif`;
+          ctx.font = `700 ${fontSize}px "${fontName}", "Oswald", "Bebas Neue", "Anton", sans-serif`;
           if ('letterSpacing' in ctx) {
             (ctx as any).letterSpacing = `${letterGapPx}px`;
           }
@@ -137,9 +156,12 @@ export function calculateTightTextDimensions(
 
           digits.forEach((d, idx) => {
             const url = numberAssets[d];
+            if (url) preloadAssetImage(url);
             const cachedRatio = url ? getCachedAssetAspectRatio(url) : null;
+            let digitW = 0;
+
             if (cachedRatio) {
-              totalWPx += hPx * cachedRatio;
+              digitW = hPx * cachedRatio;
             } else if (url && url.startsWith('data:image/svg+xml')) {
               const match = url.match(/viewBox=["']0 0 ([\d.]+) ([\d.]+)["']/);
               if (match) {
@@ -148,19 +170,19 @@ export function calculateTightTextDimensions(
                 if (svgW && svgH) {
                   const ratio = svgW / svgH;
                   registerAssetAspectRatio(url, ratio);
-                  totalWPx += hPx * ratio;
-                  return;
+                  digitW = hPx * ratio;
                 }
               }
-              const defaultRatio = d === '1' ? 0.28 : d === '4' ? 0.55 : 0.48;
-              totalWPx += hPx * defaultRatio;
-            } else {
-              // For PNG/Raster images without loaded metadata yet:
-              // Digit '1' is slim (0.28 aspect ratio), digit '4' is 0.55, others are ~0.48
-              const defaultRatio = d === '1' ? 0.28 : d === '4' ? 0.55 : 0.48;
-              totalWPx += hPx * defaultRatio;
             }
 
+            if (!digitW) {
+              // Accurate aspect ratios for condensed athletic jersey numbers:
+              // '1' is 0.25, '4' is 0.44, other standard digits are 0.36-0.38
+              const defaultRatio = d === '1' ? 0.25 : d === '4' ? 0.44 : 0.38;
+              digitW = hPx * defaultRatio;
+            }
+
+            totalWPx += digitW;
             if (idx < digits.length - 1) {
               totalWPx += gapPx;
             }
@@ -198,14 +220,20 @@ export function calculateTightTextDimensions(
     const digits = cleanText.replace(/[^0-9]/g, '').split('');
     let totalRatio = 0;
     digits.forEach((d) => {
-      totalRatio += (d === '1' ? 0.28 : d === '4' ? 0.55 : 0.48);
+      totalRatio += (d === '1' ? 0.25 : d === '4' ? 0.44 : 0.38);
     });
     const gap = digits.length > 1 ? (digits.length - 1) * 0.03 : 0;
     const estWidth = Math.max(0.5, heightInches * (totalRatio + gap));
     return { widthInches: parseFloat(estWidth.toFixed(2)), heightInches };
   } else {
-    const charCount = cleanText.length || 1;
-    const estWidth = Math.max(0.5, charCount * (heightInches * 0.50));
+    const chars = cleanText.toUpperCase().split('');
+    let totalRatio = 0;
+    chars.forEach((c) => {
+      if (c === ' ') totalRatio += 0.20;
+      else totalRatio += (c === 'I' ? 0.18 : c === 'W' || c === 'M' ? 0.52 : c === 'J' || c === 'L' ? 0.30 : 0.35);
+    });
+    const estWidth = Math.max(0.5, heightInches * totalRatio);
     return { widthInches: parseFloat(estWidth.toFixed(2)), heightInches };
   }
 }
+

@@ -110,8 +110,17 @@ export function generateAutoNestingLayout(
   orders.forEach((ord) => {
     if (!ord.matchedPreset) return;
 
+    // Scale defaults based on garment size
+    let scale = 1.0;
+    if (ord.garmentSize === 'Youth') scale = 0.8;
+    if (ord.garmentSize === 'Infant') scale = 0.65;
+
     // Add Name block if customerName exists
     if (ord.customerName) {
+      const presetNameHeight = ord.matchedPreset?.defaultNameHeightInches || 2.2;
+      const nameHeight = presetNameHeight * scale;
+      const tightName = calculateTightTextDimensions(ord.customerName, 'name', ord.matchedPreset, nameHeight);
+
       rawBlocks.push({
         id: `${ord.id}-name`,
         orderId: ord.id,
@@ -120,14 +129,18 @@ export function generateAutoNestingLayout(
         number: ord.number,
         designCode: ord.designCode,
         preset: ord.matchedPreset,
-        w: ord.nameWidthInches,
-        h: ord.nameHeightInches,
+        w: tightName.widthInches,
+        h: tightName.heightInches,
         garmentSize: ord.garmentSize,
       });
     }
 
     // Add Number block if number exists
     if (ord.number) {
+      const presetNumHeight = ord.matchedPreset?.defaultNumberHeightInches || 9.5;
+      const numHeight = presetNumHeight * scale;
+      const tightNum = calculateTightTextDimensions(ord.number, 'number', ord.matchedPreset, numHeight);
+
       rawBlocks.push({
         id: `${ord.id}-number`,
         orderId: ord.id,
@@ -136,8 +149,8 @@ export function generateAutoNestingLayout(
         number: ord.number,
         designCode: ord.designCode,
         preset: ord.matchedPreset,
-        w: ord.numberWidthInches,
-        h: ord.numberHeightInches,
+        w: tightNum.widthInches,
+        h: tightNum.heightInches,
         garmentSize: ord.garmentSize,
       });
     }
@@ -160,50 +173,12 @@ export function generateAutoNestingLayout(
       let itemW = block.w;
       let itemH = block.h;
 
-      // Check if block fits in current row with Smart Packing Buffer & Margin Tolerance
-      const overflow = currentX + itemW + margin - rollWidth;
-      const TOLERANCE_WINDOW = 2.8; // Smart packing buffer (2.8" margin tolerance window)
-
-      if (overflow > 0) {
-        let fitInRow = false;
-
-        // If overflow is within tolerance window, keep item in current row to prevent awkward line breaks
-        if (overflow <= TOLERANCE_WINDOW) {
-          fitInRow = true;
-        } else {
-          // Attempt to fill remaining right edge gap with any smaller/shorter candidate in pool
-          let bestCandidateIdx = -1;
-          const remainingSpace = rollWidth - currentX - margin;
-
-          if (remainingSpace > 0.4) {
-            for (let i = 0; i < pool.length; i++) {
-              const candidate = pool[i];
-              if (candidate.w + margin <= remainingSpace + TOLERANCE_WINDOW) {
-                if (shelfHeight === 0 || candidate.h <= shelfHeight + 0.5) {
-                  bestCandidateIdx = i;
-                  break;
-                } else if (bestCandidateIdx === -1) {
-                  bestCandidateIdx = i;
-                }
-              }
-            }
-          }
-
-          if (bestCandidateIdx !== -1) {
-            blockIdx = bestCandidateIdx;
-            block = pool[blockIdx];
-            itemW = block.w;
-            itemH = block.h;
-            fitInRow = true;
-          }
-        }
-
-        if (!fitInRow) {
-          // Wrap cleanly to next shelf row down
-          currentX = margin;
-          currentY += shelfHeight + margin;
-          shelfHeight = 0;
-        }
+      // Check if block fits in current row strictly within 39" roll width
+      if (currentX + itemW > rollWidth - 0.02 && currentX > margin) {
+        // Wrap cleanly to next shelf row down
+        currentX = margin;
+        currentY += shelfHeight + margin;
+        shelfHeight = 0;
       }
 
       // Remove chosen block from pool

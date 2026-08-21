@@ -105,7 +105,7 @@ function renderNameText(
   const letterGapPx = Math.max(2, userSpacing * (scale / 30));
 
   if (hasLetterAssets) {
-    const spaceWidthPx = hPx * 0.22;
+    const spaceWidthPx = hPx * 0.20;
     const charWidths: number[] = [];
     let rawTotalW = 0;
 
@@ -116,18 +116,26 @@ function renderNameText(
       } else {
         const url = letterAssets[c];
         const img = url ? getLoadedImage(url) : null;
-        let cW = hPx * 0.55;
+        let cW = 0;
         if (img && img.naturalWidth && img.naturalHeight) {
           cW = hPx * (img.naturalWidth / img.naturalHeight);
+        } else {
+          const cachedRatio = url ? getCachedAssetAspectRatio(url) : null;
+          if (cachedRatio) {
+            cW = hPx * cachedRatio;
+          } else {
+            const defaultRatio = c === 'I' ? 0.18 : c === 'W' || c === 'M' ? 0.52 : c === 'J' || c === 'L' ? 0.30 : 0.35;
+            cW = hPx * defaultRatio;
+          }
         }
         charWidths.push(cW);
         rawTotalW += cW + (i < chars.length - 1 ? letterGapPx : 0);
       }
     });
 
-    const scaleX = rawTotalW > 0 ? Math.min(wPx / rawTotalW, 1.05) : 1.0;
+    const scaleX = rawTotalW > 0 ? (wPx / rawTotalW) : 1.0;
     const actualTotalW = rawTotalW * scaleX;
-    const startX = (wPx - actualTotalW) / 2;
+    const startX = Math.max(0, (wPx - actualTotalW) / 2);
 
     let curX = startX;
 
@@ -398,7 +406,7 @@ function renderNumberText(
     digits.forEach((digitChar, i) => {
       const assetUrl = numberAssets[digitChar];
       const img = assetUrl ? getLoadedImage(assetUrl) : null;
-      let cW = hPx * (digitChar === '1' ? 0.28 : digitChar === '4' ? 0.55 : 0.48);
+      let cW = hPx * (digitChar === '1' ? 0.25 : digitChar === '4' ? 0.44 : 0.38);
 
       if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
         cW = hPx * (img.naturalWidth / img.naturalHeight);
@@ -420,7 +428,7 @@ function renderNumberText(
       rawTotalW += cW + (i < count - 1 ? gapPx : 0);
     });
 
-    const scaleX = rawTotalW > 0 ? Math.min(wPx / rawTotalW, 1.05) : 1.0;
+    const scaleX = rawTotalW > 0 ? (wPx / rawTotalW) : 1.0;
     const actualTotalW = rawTotalW * scaleX;
     const startX = Math.max(0, (wPx - actualTotalW) / 2);
 
