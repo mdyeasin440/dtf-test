@@ -22,6 +22,11 @@ import {
   Database,
   RefreshCw,
   AlertCircle,
+  Folder,
+  FolderUp,
+  Files,
+  CheckCheck,
+  Upload,
 } from 'lucide-react';
 import { DesignPreset } from '../types';
 import { registerCustomFont } from '../utils/fontLoader';
@@ -57,6 +62,27 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
   const [isSavingCloud, setIsSavingCloud] = useState(false);
   const [uploadingAssetKey, setUploadingAssetKey] = useState<string | null>(null);
   const [isRefreshingCloud, setIsRefreshingCloud] = useState(false);
+  const [bulkUploadProgress, setBulkUploadProgress] = useState<{
+    isActive: boolean;
+    totalFiles: number;
+    currentFileIndex: number;
+    currentFileName: string;
+    matchedNumbers: number;
+    matchedLetters: number;
+    unmatchedFiles: string[];
+    status: 'idle' | 'processing' | 'done' | 'error';
+    message: string;
+  }>({
+    isActive: false,
+    totalFiles: 0,
+    currentFileIndex: 0,
+    currentFileName: '',
+    matchedNumbers: 0,
+    matchedLetters: 0,
+    unmatchedFiles: [],
+    status: 'idle',
+    message: '',
+  });
   const [cloudStatus, setCloudStatus] = useState<{
     connected: boolean;
     database: string;
@@ -405,6 +431,194 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
     });
   };
 
+  /**
+   * Helper to parse filenames into Number digits (0-9) or Letter characters (A-Z)
+   */
+  const parseAssetFromFileName = (
+    filename: string,
+    targetScope: 'all' | 'numbers' | 'letters' = 'all'
+  ): { type: 'number' | 'letter' | null; key: string } => {
+    const baseName = filename.replace(/\.[^/.]+$/, '').trim();
+    if (!baseName) return { type: null, key: '' };
+
+    // 1. Exact single digit 0-9
+    if ((targetScope === 'all' || targetScope === 'numbers') && /^[0-9]$/.test(baseName)) {
+      return { type: 'number', key: baseName };
+    }
+
+    // 2. Exact single letter A-Z
+    if ((targetScope === 'all' || targetScope === 'letters') && /^[a-zA-Z]$/.test(baseName)) {
+      return { type: 'letter', key: baseName.toUpperCase() };
+    }
+
+    // 3. Number prefix patterns: "num_0", "number_1", "digit-2", "n3", "0_white", "0-jersey"
+    if (targetScope === 'all' || targetScope === 'numbers') {
+      const numPrefixMatch = baseName.match(/^(?:num|number|digit|n|no|d)[_\-\s]?([0-9])$/i);
+      if (numPrefixMatch) return { type: 'number', key: numPrefixMatch[1] };
+
+      const numSuffixMatch = baseName.match(/^([0-9])[_\-\s](?:white|black|color|cut|stroke|gold|red|blue|vector|png|layer|jersey|back|front)/i);
+      if (numSuffixMatch) return { type: 'number', key: numSuffixMatch[1] };
+
+      const numBoundaryMatch = baseName.match(/^[_\-\s]*([0-9])[_\-\s]*$/);
+      if (numBoundaryMatch) return { type: 'number', key: numBoundaryMatch[1] };
+    }
+
+    // 4. Letter prefix patterns: "letter_a", "char_B", "let-C", "alpha_d", "name_e", "A_white", "B_font"
+    if (targetScope === 'all' || targetScope === 'letters') {
+      const letPrefixMatch = baseName.match(/^(?:letter|char|let|alpha|name|font|l)[_\-\s]?([a-zA-Z])$/i);
+      if (letPrefixMatch) return { type: 'letter', key: letPrefixMatch[1].toUpperCase() };
+
+      const letSuffixMatch = baseName.match(/^([a-zA-Z])[_\-\s](?:white|black|color|cut|stroke|gold|red|blue|vector|png|layer|jersey|font|char)/i);
+      if (letSuffixMatch) return { type: 'letter', key: letSuffixMatch[1].toUpperCase() };
+
+      const letBoundaryMatch = baseName.match(/^[_\-\s]*([a-zA-Z])[_\-\s]*$/);
+      if (letBoundaryMatch) return { type: 'letter', key: letBoundaryMatch[1].toUpperCase() };
+    }
+
+    // Scope specific fallback
+    if (targetScope === 'numbers') {
+      const dMatch = baseName.match(/([0-9])/);
+      if (dMatch) return { type: 'number', key: dMatch[1] };
+    }
+
+    if (targetScope === 'letters') {
+      const cMatch = baseName.match(/(?:^|[^a-zA-Z])([a-zA-Z])(?:$|[^a-zA-Z])/);
+      if (cMatch) return { type: 'letter', key: cMatch[1].toUpperCase() };
+    }
+
+    return { type: null, key: '' };
+  };
+
+  /**
+   * Bulk uploads and processes entire folders or multi-selected image files
+   * Maps digits 0-9 to numberAssets and A-Z to letterAssets with Cloudflare R2 persistence!
+   */
+  const handleBulkAssetUpload = async (
+    files: FileList | File[] | null,
+    targetScope: 'all' | 'numbers' | 'letters' = 'all'
+  ) => {
+    if (!files || files.length === 0 || !editingPreset) return;
+
+    const fileArray = Array.from(files).filter((file) => {
+      return (
+        file.type.startsWith('image/') ||
+        /\.(png|jpe?g|webp|svg)$/i.test(file.name)
+      );
+    });
+
+    if (fileArray.length === 0) {
+      setBulkUploadProgress({
+        isActive: true,
+        totalFiles: 0,
+        currentFileIndex: 0,
+        currentFileName: '',
+        matchedNumbers: 0,
+        matchedLetters: 0,
+        unmatchedFiles: [],
+        status: 'error',
+        message: 'No valid image files (.png, .webp, .svg, .jpg) found.',
+      });
+      return;
+    }
+
+    setBulkUploadProgress({
+      isActive: true,
+      totalFiles: fileArray.length,
+      currentFileIndex: 0,
+      currentFileName: fileArray[0].name,
+      matchedNumbers: 0,
+      matchedLetters: 0,
+      unmatchedFiles: [],
+      status: 'processing',
+      message: `Analyzing and uploading ${fileArray.length} image assets...`,
+    });
+
+    const newNumbers: Record<string, string> = { ...(editingPreset.numberAssets || {}) };
+    const newLetters: Record<string, string> = { ...(editingPreset.letterAssets || {}) };
+    const unmatched: string[] = [];
+    let numCount = 0;
+    let letCount = 0;
+
+    const sanitizedCode = (editingPreset.code || 'custom').replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    for (let i = 0; i < fileArray.length; i++) {
+      const file = fileArray[i];
+      const match = parseAssetFromFileName(file.name, targetScope);
+
+      setBulkUploadProgress((prev) => ({
+        ...prev,
+        currentFileIndex: i + 1,
+        currentFileName: file.name,
+        message: `Processing (${i + 1}/${fileArray.length}): ${file.name} ${match.type ? `→ [${match.type.toUpperCase()}: ${match.key}]` : ''}`,
+      }));
+
+      if (!match.type || !match.key) {
+        unmatched.push(file.name);
+        continue;
+      }
+
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target?.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        // Trim transparent bounding borders for crisp rendering
+        const trimmed = await trimTransparentImageCanvas(dataUrl);
+
+        // Upload to Cloudflare R2
+        if (match.type === 'number') {
+          const digit = match.key;
+          const r2Key = `numbers/${sanitizedCode}_digit_${digit}_${Date.now()}.png`;
+          const uploadRes = await uploadAssetToR2(r2Key, trimmed.dataUrl, 'image/png');
+          const finalUrl = uploadRes.url || trimmed.dataUrl;
+          newNumbers[digit] = finalUrl;
+          numCount++;
+        } else if (match.type === 'letter') {
+          const char = match.key;
+          const r2Key = `letters/${sanitizedCode}_letter_${char}_${Date.now()}.png`;
+          const uploadRes = await uploadAssetToR2(r2Key, trimmed.dataUrl, 'image/png');
+          const finalUrl = uploadRes.url || trimmed.dataUrl;
+          newLetters[char] = finalUrl;
+          letCount++;
+        }
+
+        // Live state update so grid fills in real time
+        setEditingPreset((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            numberAssets: { ...newNumbers },
+            letterAssets: { ...newLetters },
+          };
+        });
+
+        setBulkUploadProgress((prev) => ({
+          ...prev,
+          matchedNumbers: numCount,
+          matchedLetters: letCount,
+        }));
+      } catch (err) {
+        console.warn(`Failed to process ${file.name}:`, err);
+        unmatched.push(file.name);
+      }
+    }
+
+    setBulkUploadProgress({
+      isActive: true,
+      totalFiles: fileArray.length,
+      currentFileIndex: fileArray.length,
+      currentFileName: '',
+      matchedNumbers: numCount,
+      matchedLetters: letCount,
+      unmatchedFiles: unmatched,
+      status: 'done',
+      message: `Bulk Upload Completed! Successfully added ${numCount} Number(s) & ${letCount} Letter(s).`,
+    });
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Top Header Controls */}
@@ -732,6 +946,109 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                 )}
               </div>
 
+              {/* Smart Bulk Folder & Multi-File Auto-Importer */}
+              <div className="bg-gradient-to-r from-blue-950/40 via-zinc-900 to-indigo-950/40 p-4 rounded-xl border border-blue-500/30 space-y-3 shadow-lg">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-bold text-blue-300 uppercase tracking-wider flex items-center space-x-2">
+                      <FolderUp className="w-4 h-4 text-blue-400" />
+                      <span>Bulk Folder / Multi-File Auto-Importer</span>
+                    </h3>
+                    <p className="text-[11px] text-zinc-400 font-mono mt-0.5">
+                      Upload an entire folder or select multiple images for Numbers (0-9) and Letters (A-Z). Files like <span className="text-blue-300 font-bold">0.png–9.png</span> auto-map to digits and <span className="text-blue-300 font-bold">A.png–Z.png</span> auto-map to name letters!
+                    </p>
+                  </div>
+
+                  {/* Master upload action buttons */}
+                  <div className="flex items-center space-x-2 shrink-0">
+                    <label className="cursor-pointer px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold uppercase tracking-wider rounded shadow-md flex items-center space-x-1.5 transition-all">
+                      <Folder className="w-3.5 h-3.5" />
+                      <span>📁 Upload Folder</span>
+                      <input
+                        type="file"
+                        {...({ webkitdirectory: '', directory: '', multiple: true } as any)}
+                        onChange={(e) => {
+                          handleBulkAssetUpload(e.target.files, 'all');
+                          e.target.value = '';
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+
+                    <label className="cursor-pointer px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-[10px] font-bold uppercase tracking-wider rounded shadow-md flex items-center space-x-1.5 transition-all">
+                      <Files className="w-3.5 h-3.5 text-blue-400" />
+                      <span>🗂️ Select Files</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/png,image/svg+xml,image/webp,image/jpeg"
+                        onChange={(e) => {
+                          handleBulkAssetUpload(e.target.files, 'all');
+                          e.target.value = '';
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {/* Real-time Progress Bar & Status */}
+                {bulkUploadProgress.isActive && (
+                  <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800 text-xs font-mono space-y-2">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <div className="flex items-center space-x-2">
+                        {bulkUploadProgress.status === 'processing' && (
+                          <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                        )}
+                        {bulkUploadProgress.status === 'done' && (
+                          <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
+                        )}
+                        {bulkUploadProgress.status === 'error' && (
+                          <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                        )}
+                        <span className="text-zinc-200">{bulkUploadProgress.message}</span>
+                      </div>
+
+                      <span className="text-zinc-400 font-bold">
+                        {bulkUploadProgress.totalFiles > 0
+                          ? `${Math.round((bulkUploadProgress.currentFileIndex / bulkUploadProgress.totalFiles) * 100)}%`
+                          : ''}
+                      </span>
+                    </div>
+
+                    {bulkUploadProgress.totalFiles > 0 && (
+                      <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className={`h-full transition-all duration-200 ${
+                            bulkUploadProgress.status === 'done' ? 'bg-emerald-500' : 'bg-blue-500'
+                          }`}
+                          style={{
+                            width: `${(bulkUploadProgress.currentFileIndex / bulkUploadProgress.totalFiles) * 100}%`,
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-zinc-400 pt-1">
+                      <div className="flex items-center space-x-3">
+                        <span className="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/50">
+                          🔢 Numbers Mapped: <strong>{bulkUploadProgress.matchedNumbers}</strong>
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/50">
+                          🔤 Letters Mapped: <strong>{bulkUploadProgress.matchedLetters}</strong>
+                        </span>
+                      </div>
+
+                      {bulkUploadProgress.unmatchedFiles.length > 0 && (
+                        <span className="text-amber-400">
+                          ⚠️ {bulkUploadProgress.unmatchedFiles.length} file(s) skipped (not named 0-9 or A-Z)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Number PNG Asset Grid (0-9) */}
               <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
@@ -741,18 +1058,51 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       <span>Upload Number PNG Assets (0-9) to Cloudflare R2</span>
                     </h3>
                     <p className="text-[10px] text-zinc-500 font-mono">
-                      High-res transparent PNGs are stored in R2 (env.MY_BUCKET) and served globally.
+                      High-res transparent PNGs stored in Cloudflare R2 and served globally.
                     </p>
                   </div>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center flex-wrap gap-2">
+                    <label
+                      className="cursor-pointer px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-blue-400 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
+                      title="Upload a folder containing 0.png - 9.png"
+                    >
+                      <Folder className="w-3 h-3" />
+                      <span>Folder (0-9)</span>
+                      <input
+                        type="file"
+                        {...({ webkitdirectory: '', directory: '', multiple: true } as any)}
+                        onChange={(e) => {
+                          handleBulkAssetUpload(e.target.files, 'numbers');
+                          e.target.value = '';
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                    <label
+                      className="cursor-pointer px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
+                      title="Select multiple digit files (0-9)"
+                    >
+                      <Files className="w-3 h-3 text-blue-400" />
+                      <span>Files</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/png,image/svg+xml,image/webp,image/jpeg"
+                        onChange={(e) => {
+                          handleBulkAssetUpload(e.target.files, 'numbers');
+                          e.target.value = '';
+                        }}
+                        className="hidden"
+                      />
+                    </label>
                     <button
                       type="button"
                       onClick={handleGenerateSampleNumberAssets}
-                      className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
+                      className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
                       title="Auto-generate matching sample vector number graphics for digits 0-9"
                     >
                       <Sparkles className="w-3 h-3 text-blue-400" />
-                      <span>Sample 0-9 Set</span>
+                      <span>Sample 0-9</span>
                     </button>
                     {editingPreset.numberAssets && Object.keys(editingPreset.numberAssets).length > 0 && (
                       <button
@@ -834,15 +1184,48 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       Optional custom PNG cuts for each letter A-Z uploaded to R2.
                     </p>
                   </div>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center flex-wrap gap-2">
+                    <label
+                      className="cursor-pointer px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-blue-400 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
+                      title="Upload a folder containing A.png - Z.png"
+                    >
+                      <Folder className="w-3 h-3" />
+                      <span>Folder (A-Z)</span>
+                      <input
+                        type="file"
+                        {...({ webkitdirectory: '', directory: '', multiple: true } as any)}
+                        onChange={(e) => {
+                          handleBulkAssetUpload(e.target.files, 'letters');
+                          e.target.value = '';
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                    <label
+                      className="cursor-pointer px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
+                      title="Select multiple letter files (A-Z)"
+                    >
+                      <Files className="w-3 h-3 text-blue-400" />
+                      <span>Files</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/png,image/svg+xml,image/webp,image/jpeg"
+                        onChange={(e) => {
+                          handleBulkAssetUpload(e.target.files, 'letters');
+                          e.target.value = '';
+                        }}
+                        className="hidden"
+                      />
+                    </label>
                     <button
                       type="button"
                       onClick={handleGenerateSampleLetterAssets}
-                      className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
+                      className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
                       title="Auto-generate sample A-Z vector letter graphics"
                     >
                       <Sparkles className="w-3 h-3 text-blue-400" />
-                      <span>Sample A-Z Set</span>
+                      <span>Sample A-Z</span>
                     </button>
                     {editingPreset.letterAssets && Object.keys(editingPreset.letterAssets).length > 0 && (
                       <button
