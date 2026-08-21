@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Search,
   Plus,
@@ -19,13 +19,23 @@ import {
   UploadCloud,
   Loader2,
   Cloud,
+  Database,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import { DesignPreset } from '../types';
 import { registerCustomFont } from '../utils/fontLoader';
 import { generateSampleNumberAssets } from '../utils/numberAssetHelper';
 import { generateSampleLetterAssets } from '../utils/letterAssetHelper';
 import { trimTransparentImageCanvas } from '../utils/imageTrimmer';
-import { savePresetToD1, deletePresetFromD1, saveLocalPresets, uploadAssetToR2 } from '../utils/d1Api';
+import {
+  savePresetToD1,
+  deletePresetFromD1,
+  saveLocalPresets,
+  uploadAssetToR2,
+  fetchPresetsFromD1,
+  checkCloudflareStatus,
+} from '../utils/d1Api';
 
 interface DatabaseManagerProps {
   presets: DesignPreset[];
@@ -46,6 +56,44 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [isSavingCloud, setIsSavingCloud] = useState(false);
   const [uploadingAssetKey, setUploadingAssetKey] = useState<string | null>(null);
+  const [isRefreshingCloud, setIsRefreshingCloud] = useState(false);
+  const [cloudStatus, setCloudStatus] = useState<{
+    connected: boolean;
+    database: string;
+    storage: string;
+    checked: boolean;
+  }>({
+    connected: false,
+    database: 'Checking...',
+    storage: 'Checking...',
+    checked: false,
+  });
+
+  useEffect(() => {
+    checkCloudflareStatus().then((res) => {
+      setCloudStatus({
+        connected: res.connected,
+        database: res.database,
+        storage: res.storage,
+        checked: true,
+      });
+    });
+  }, []);
+
+  const handleRefreshFromCloud = async () => {
+    setIsRefreshingCloud(true);
+    setStatusMessage('Syncing latest presets from Cloudflare D1 Database...');
+    try {
+      const latest = await fetchPresetsFromD1();
+      setPresets(latest);
+      setStatusMessage(`Synced ${latest.length} presets from Cloudflare D1 Database!`);
+    } catch (err: any) {
+      setStatusMessage('Sync notice: using cached presets');
+    } finally {
+      setIsRefreshingCloud(false);
+      setTimeout(() => setStatusMessage(''), 4000);
+    }
+  };
 
   // League filters
   const leagues = ['All', 'La Liga', 'Premier League', 'Serie A', 'Bundesliga', 'Ligue 1', 'MLS', 'International', 'Retro', 'Custom'];
@@ -358,12 +406,42 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
 
         <div className="flex items-center space-x-3">
           <button
+            onClick={handleRefreshFromCloud}
+            disabled={isRefreshingCloud}
+            title="Sync all presets directly from Cloudflare D1"
+            className="flex items-center space-x-2 px-3.5 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 font-mono text-xs rounded transition-all shadow-md disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-blue-400 ${isRefreshingCloud ? 'animate-spin' : ''}`} />
+            <span>{isRefreshingCloud ? 'Syncing...' : 'Sync Cloud D1'}</span>
+          </button>
+
+          <button
             onClick={handleCreateNew}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase tracking-wider text-xs rounded shadow-lg shadow-blue-900/20 transition-all"
           >
             <Plus className="w-4 h-4" />
             <span>+ Add New Design Code</span>
           </button>
+        </div>
+      </div>
+
+      {/* Cloud Connectivity Status Bar */}
+      <div className="mb-6 p-3 rounded-lg border bg-zinc-950/80 border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+        <div className="flex items-center space-x-2.5">
+          <span className={`w-2.5 h-2.5 rounded-full ${cloudStatus.connected ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'bg-amber-500'}`} />
+          <span className="text-zinc-300">
+            D1 Database: <strong className="text-white">{cloudStatus.database}</strong>
+          </span>
+          <span className="text-zinc-600">|</span>
+          <span className="text-zinc-300">
+            R2 Bucket: <strong className="text-white">{cloudStatus.storage}</strong>
+          </span>
+        </div>
+
+        <div className="flex items-center space-x-2 text-[11px] text-zinc-400">
+          <span>{presets.length} Presets Available</span>
+          <span className="text-zinc-600">•</span>
+          <span className="text-emerald-400 font-semibold">Multi-Device Cloud Ready</span>
         </div>
       </div>
 

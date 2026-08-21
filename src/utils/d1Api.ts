@@ -107,6 +107,34 @@ export function preloadPresetFonts(presets: DesignPreset[]) {
 }
 
 /**
+ * Check Cloudflare D1 & R2 connectivity status
+ */
+export async function checkCloudflareStatus(): Promise<{
+  connected: boolean;
+  database: string;
+  storage: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/health');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return {
+      connected: data.status === 'ok',
+      database: data.database || 'Cloudflare D1',
+      storage: data.storageBucket || 'Cloudflare R2',
+    };
+  } catch (err: any) {
+    return {
+      connected: false,
+      database: 'Offline / Local Fallback',
+      storage: 'Offline / Local Fallback',
+      error: err.message,
+    };
+  }
+}
+
+/**
  * Fetch all design presets from the Cloudflare D1 database via API.
  * Automatically merges cloud database presets with local custom creations.
  */
@@ -114,7 +142,8 @@ export async function fetchPresetsFromD1(): Promise<DesignPreset[]> {
   try {
     const res = await fetch('/api/presets');
     if (!res.ok) {
-      throw new Error(`HTTP error ${res.status}`);
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP error ${res.status}`);
     }
     const data = await res.json();
     if (data.success && Array.isArray(data.presets)) {
@@ -136,13 +165,13 @@ export async function fetchPresetsFromD1(): Promise<DesignPreset[]> {
           presetMap.set(p.code.toUpperCase(), p);
         }
       }
-      // 3. Overwrite / append cloud presets from D1 database
+      // 3. Overwrite / append cloud presets from D1 database (cloud is primary truth)
       for (const p of cloudPresets) {
         if (p && p.code) {
           presetMap.set(p.code.toUpperCase(), p);
         }
       }
-      // 4. Ensure local custom presets created in this browser are never dropped
+      // 4. Ensure local custom presets created in this browser are also present
       for (const p of customPresets) {
         if (p && p.code && !presetMap.has(p.code.toUpperCase())) {
           presetMap.set(p.code.toUpperCase(), p);
@@ -153,9 +182,9 @@ export async function fetchPresetsFromD1(): Promise<DesignPreset[]> {
       saveLocalPresets(merged);
       preloadPresetFonts(merged);
 
-      // Auto-sync any local custom presets to D1 if D1 had fewer
-      if (cloudPresets.length === 0 && localPresets.length > defaultPresets.length) {
-        savePresetsToD1(merged).catch(() => {});
+      // Auto-sync any local custom presets to D1 if D1 is missing them
+      if (cloudPresets.length === 0 && customPresets.length > 0) {
+        savePresetsToD1(customPresets).catch(() => {});
       }
 
       return merged;

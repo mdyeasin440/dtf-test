@@ -112,6 +112,9 @@ function jsonResponse(data: any, status = 200) {
 
 // Auto-initialize SQLite tables in D1 if they do not exist
 async function ensureD1Tables(env: Env) {
+  if (!env || !env.MY_DB) {
+    throw new Error('Cloudflare D1 binding "MY_DB" is not configured or available in environment.');
+  }
   try {
     await env.MY_DB.exec(`
       CREATE TABLE IF NOT EXISTS design_presets (
@@ -156,8 +159,8 @@ async function ensureD1Tables(env: Env) {
         createdAt TEXT NOT NULL
       );
     `);
-  } catch (e) {
-    console.warn('ensureD1Tables check notice:', e);
+  } catch (e: any) {
+    console.warn('ensureD1Tables warning:', e);
   }
 }
 
@@ -385,6 +388,13 @@ export default {
 
         // GET /api/presets - Fetch all presets from D1
         if (path === '/api/presets' && method === 'GET') {
+          if (!env.MY_DB) {
+            return jsonResponse({
+              success: false,
+              error: 'Cloudflare D1 database binding (MY_DB) is not connected in Cloudflare Settings.',
+              presets: [],
+            }, 500);
+          }
           await ensureD1Tables(env);
           const { results } = await env.MY_DB.prepare(
             `SELECT * FROM design_presets ORDER BY updatedAt DESC`
@@ -403,6 +413,12 @@ export default {
 
         // POST /api/presets - Save single or array of presets
         if (path === '/api/presets' && method === 'POST') {
+          if (!env.MY_DB) {
+            return jsonResponse({
+              success: false,
+              error: 'Cloudflare D1 database binding (MY_DB) is not connected in Cloudflare Settings.',
+            }, 500);
+          }
           await ensureD1Tables(env);
           const body: any = await request.json();
           if (!body) {
