@@ -109,12 +109,23 @@ async function startServer() {
   // 4. DELETE /api/presets/:id - Remove design preset
   app.delete('/api/presets/:id', (req, res) => {
     const id = req.params.id;
-    if (!id) {
+    const queryCode = (req.query.code as string) || '';
+    const queryId = (req.query.id as string) || '';
+
+    const targets = [id, queryCode, queryId].filter(Boolean).map((s) => s.toUpperCase());
+    if (targets.length === 0) {
       return res.status(400).json({ success: false, error: 'Preset ID is required' });
     }
 
-    inMemoryPresets.delete(id);
-    return res.json({ success: true, message: 'Preset deleted from database' });
+    for (const [key, val] of inMemoryPresets.entries()) {
+      const valId = (val.id || '').toUpperCase();
+      const valCode = (val.code || '').toUpperCase();
+      const match = targets.some((t) => key.toUpperCase() === t || valId === t || valCode === t);
+      if (match) {
+        inMemoryPresets.delete(key);
+      }
+    }
+    return res.json({ success: true, message: 'Preset permanently deleted from database' });
   });
 
   // 5. POST /api/orders/bulk - Save parsed orders batch

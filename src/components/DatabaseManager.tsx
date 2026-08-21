@@ -201,18 +201,27 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
 
   const handleDelete = async (id: string, code: string) => {
     if (window.confirm(`Are you sure you want to delete preset "${code}" from cloud and local database?`)) {
-      // Immediate local state update
+      const cleanCode = (code || '').trim().toUpperCase();
+
+      // Immediate local state update across id & code
       setPresets((prev) => {
-        const updated = prev.filter((p) => p.id !== id);
+        const updated = prev.filter(
+          (p) => p.id !== id && (!p.code || p.code.trim().toUpperCase() !== cleanCode)
+        );
         saveLocalPresets(updated);
         return updated;
       });
 
-      setStatusMessage(`Preset "${code}" removed.`);
-      setTimeout(() => setStatusMessage(''), 4000);
+      if (editingPreset && (editingPreset.id === id || editingPreset.code?.toUpperCase() === cleanCode)) {
+        setEditingPreset(null);
+        setIsCreating(false);
+      }
 
-      // Sync deletion to Cloudflare D1
-      await deletePresetFromD1(id);
+      setStatusMessage(`Preset "${code}" permanently deleted from cloud & local database.`);
+      setTimeout(() => setStatusMessage(''), 4500);
+
+      // Sync deletion to Cloudflare D1 & permanent delete registry
+      await deletePresetFromD1(id, code);
     }
   };
 

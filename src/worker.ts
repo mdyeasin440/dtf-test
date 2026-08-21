@@ -498,15 +498,36 @@ export default {
           });
         }
 
-        // DELETE /api/presets/:id
+        // DELETE /api/presets/:id (or /api/presets/:code)
         if (path.startsWith('/api/presets/') && method === 'DELETE') {
-          const id = path.split('/')[3];
-          if (!id) {
-            return jsonResponse({ success: false, error: 'Preset ID is required' }, 400);
+          if (!env.MY_DB) {
+            return jsonResponse({ success: false, error: 'Cloudflare D1 database binding (MY_DB) is not connected' }, 500);
+          }
+          await ensureD1Tables(env);
+
+          const rawParam = path.replace('/api/presets/', '').split('?')[0];
+          const param = decodeURIComponent(rawParam || '').trim();
+          const queryCode = url.searchParams.get('code') ? decodeURIComponent(url.searchParams.get('code')!).trim() : '';
+          const queryId = url.searchParams.get('id') ? decodeURIComponent(url.searchParams.get('id')!).trim() : '';
+
+          const searchTerms = Array.from(new Set([param, queryCode, queryId].filter(Boolean)));
+
+          if (searchTerms.length === 0) {
+            return jsonResponse({ success: false, error: 'Preset ID or Code is required' }, 400);
           }
 
-          await env.MY_DB.prepare(`DELETE FROM design_presets WHERE id = ?`).bind(id).run();
-          return jsonResponse({ success: true, message: 'Preset deleted from Cloudflare D1' });
+          // Delete all matching entries by id or code (case-insensitive)
+          for (const term of searchTerms) {
+            await env.MY_DB.prepare(
+              `DELETE FROM design_presets WHERE id = ? OR code = ? OR UPPER(code) = ? OR UPPER(id) = ?`
+            ).bind(term, term, term.toUpperCase(), term.toUpperCase()).run();
+          }
+
+          return jsonResponse({
+            success: true,
+            message: 'Preset permanently deleted from Cloudflare D1',
+            deletedIdentifiers: searchTerms,
+          });
         }
 
         // POST /api/orders/bulk - Save parsed orders
