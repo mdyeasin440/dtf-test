@@ -5,7 +5,13 @@ export function renderItemToCanvas(
   ctx: CanvasRenderingContext2D,
   item: CanvasItem,
   scale: number, // pixels per inch
-  options: { showCutLines?: boolean; cutLineColor?: string; isSelected?: boolean; hasCollision?: boolean } = {}
+  options: {
+    showCutLines?: boolean;
+    cutLineColor?: string;
+    isSelected?: boolean;
+    hasCollision?: boolean;
+    hoveredHandle?: string | null;
+  } = {}
 ) {
   const { preset } = item;
   const rotationDeg = item.rotation || 0;
@@ -44,26 +50,73 @@ export function renderItemToCanvas(
     ctx.lineWidth = 2;
     ctx.strokeRect(0, 0, itemWPx, itemHPx);
   } else if (options.isSelected) {
-    ctx.strokeStyle = '#06b6d4'; // Cyan highlight
-    ctx.lineWidth = Math.max(2, 0.04 * scale);
+    // Adobe Illustrator style bounding box path line
+    ctx.strokeStyle = '#06b6d4'; // Illustrator Cyan
+    ctx.lineWidth = Math.max(1.5, 0.035 * scale);
     ctx.strokeRect(-2, -2, itemWPx + 4, itemHPx + 4);
 
-    // Corner transform handles (Adobe Illustrator style)
-    const handleSize = Math.max(6, scale * 0.12);
-    ctx.fillStyle = '#ffffff';
-    ctx.strokeStyle = '#06b6d4';
-    ctx.lineWidth = 1.5;
+    // 8 Transform Handles: 4 corners + 4 edge midpoints
+    const handleSize = Math.max(7, scale * 0.13);
+    const halfH = handleSize / 2;
+    const midX = itemWPx / 2;
+    const midY = itemHPx / 2;
 
-    const handles = [
-      [-2, -2],
-      [itemWPx + 2, -2],
-      [-2, itemHPx + 2],
-      [itemWPx + 2, itemHPx + 2],
+    const handles: { id: string; x: number; y: number }[] = [
+      { id: 'nw', x: -2, y: -2 },
+      { id: 'ne', x: itemWPx + 2, y: -2 },
+      { id: 'sw', x: -2, y: itemHPx + 2 },
+      { id: 'se', x: itemWPx + 2, y: itemHPx + 2 },
+      { id: 'n', x: midX, y: -2 },
+      { id: 's', x: midX, y: itemHPx + 2 },
+      { id: 'w', x: -2, y: midY },
+      { id: 'e', x: itemWPx + 2, y: midY },
     ];
-    handles.forEach(([hx, hy]) => {
-      ctx.fillRect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize);
-      ctx.strokeRect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize);
+
+    handles.forEach((h) => {
+      const isHovered = options.hoveredHandle === h.id;
+      ctx.fillStyle = isHovered ? '#ec4899' : '#ffffff';
+      ctx.strokeStyle = isHovered ? '#ffffff' : '#06b6d4';
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(h.x - halfH, h.y - halfH, handleSize, handleSize);
+      ctx.strokeRect(h.x - halfH, h.y - halfH, handleSize, handleSize);
     });
+
+    // If edge is hovered, show Illustrator-style "path" tooltip badge
+    if (options.hoveredHandle && ['w', 'e', 'n', 's', 'path_w', 'path_e', 'path_n', 'path_s'].includes(options.hoveredHandle)) {
+      let badgeX = midX;
+      let badgeY = midY;
+      if (options.hoveredHandle.includes('w')) {
+        badgeX = -2;
+        badgeY = midY;
+      } else if (options.hoveredHandle.includes('e')) {
+        badgeX = itemWPx + 2;
+        badgeY = midY;
+      } else if (options.hoveredHandle.includes('n')) {
+        badgeX = midX;
+        badgeY = -2;
+      } else if (options.hoveredHandle.includes('s')) {
+        badgeX = midX;
+        badgeY = itemHPx + 2;
+      }
+
+      ctx.save();
+      ctx.font = 'bold 9px sans-serif';
+      const textMetrics = ctx.measureText('path');
+      const pad = 4;
+      const bW = textMetrics.width + pad * 2;
+      const bH = 13;
+      const bX = badgeX + 6;
+      const bY = badgeY - bH / 2;
+
+      ctx.fillStyle = 'rgba(236, 72, 153, 0.95)'; // Magenta Illustrator badge
+      ctx.beginPath();
+      ctx.roundRect(bX, bY, bW, bH, 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('path', bX + pad, bY + 9.5);
+      ctx.restore();
+    }
   }
 
   // Render text content

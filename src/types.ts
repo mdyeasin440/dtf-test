@@ -84,6 +84,28 @@ export interface CanvasItem {
 
 export type NestingStrategy = 'compact' | 'grouped_by_order' | 'rotated_max_density';
 export type PackingMode = 'row_by_row_structured' | 'separate_names_and_numbers' | 'paired_order_rows' | 'combo_blocks' | 'smart_auto';
+export type DigitNestingMode = 'intact' | 'smart_unbundle' | 'split_all';
+
+export interface DigitSplitLocation {
+  digit: string;
+  itemId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  shelfRowIndex: number;
+}
+
+export interface DigitSplitLogEntry {
+  id: string;
+  orderId: string;
+  customerName: string;
+  originalNumber: string;
+  reason: 'gap_optimization' | 'shelf_end_fill' | 'smart_pocket_fill' | 'manual_unbundle';
+  digits: DigitSplitLocation[];
+  spaceSavedInches: number;
+  timestamp: string;
+}
 
 export interface LayoutSettings {
   rollWidthInches: number; // Default 39"
@@ -96,6 +118,8 @@ export interface LayoutSettings {
   zoomLevel: number; // Screen zoom factor (e.g. 1.0)
   autoRotateLongNames: boolean;
   groupDistanceInches: number; // Extra gap between orders when grouped
+  splitDigitsForNesting?: boolean; // Toggle for split nesting
+  digitNestingMode?: DigitNestingMode; // 'intact' | 'smart_unbundle' | 'split_all'
 }
 
 export interface RollMetrics {
@@ -110,4 +134,6 @@ export interface RollMetrics {
   totalOrdersCount: number;
   estimatedPrintTimeMinutes: number;
   estimatedFilmCostUSD: number;
+  totalUnbundledDigitsCount?: number;
+  totalSpaceSavedInches?: number;
 }

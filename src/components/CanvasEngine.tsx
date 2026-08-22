@@ -22,10 +22,17 @@ import {
   Sparkles,
   MousePointer,
   BoxSelect,
+  Split,
+  Link,
+  Unlink,
+  Eye,
+  CheckCircle2,
 } from 'lucide-react';
-import { CanvasItem, LayoutSettings, RollMetrics } from '../types';
+import { CanvasItem, DigitNestingMode, DigitSplitLogEntry, LayoutSettings, RollMetrics } from '../types';
 import { renderItemToCanvas, addImageLoadListener } from '../utils/canvasRenderer';
 import { checkCollisions, generateAutoNestingLayout } from '../utils/nestingEngine';
+import { calculateTightTextDimensions } from '../utils/textMeasurement';
+import { ModificationTrackerPanel } from './ModificationTrackerPanel';
 
 interface CanvasEngineProps {
   canvasItems: CanvasItem[];
@@ -86,6 +93,8 @@ function getGroupBoundingBox(items: CanvasItem[]) {
   };
 }
 
+export type ResizeHandleType = 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'w' | 'e';
+
 export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   canvasItems,
   setCanvasItems,
@@ -96,9 +105,12 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   orders,
 }) => {
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const [modificationLogs, setModificationLogs] = useState<DigitSplitLogEntry[]>([]);
+  const [activeSideTab, setActiveSideTab] = useState<'inspector' | 'tracker'>('inspector');
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
-  const [activeResizeHandle, setActiveResizeHandle] = useState<'nw' | 'ne' | 'sw' | 'se' | null>(null);
+  const [activeResizeHandle, setActiveResizeHandle] = useState<ResizeHandleType | null>(null);
+  const [hoveredHandle, setHoveredHandle] = useState<string | null>(null);
   const [dragStartPos, setDragStartPos] = useState<{ x: number; y: number } | null>(null);
   const [initialItemPositions, setInitialItemPositions] = useState<Map<string, { x: number; y: number }>>(
     new Map()
@@ -121,6 +133,16 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Initialize modification logs on mount or orders update if empty
+  useEffect(() => {
+    if (orders.length > 0 && modificationLogs.length === 0) {
+      const result = generateAutoNestingLayout(orders, layoutSettings);
+      if (result.modificationLogs && result.modificationLogs.length > 0) {
+        setModificationLogs(result.modificationLogs);
+      }
+    }
+  }, [orders]);
 
   // Listen for dynamic custom font (.ttf/.woff) and remote R2 images loading completion to refresh canvas immediately
   useEffect(() => {
@@ -286,6 +308,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         cutLineColor: layoutSettings.cutLineColor,
         isSelected: selectedItemIds.includes(item.id),
         hasCollision: collisionsMap.has(item.id),
+        hoveredHandle: selectedItemIds.length === 1 && selectedItemIds.includes(item.id) ? hoveredHandle : null,
       });
 
       // Render Amber Parked Tag for Pasteboard items
@@ -315,6 +338,8 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         const gy = gBox.y * pixelsPerInch;
         const gw = gBox.width * pixelsPerInch;
         const gh = gBox.height * pixelsPerInch;
+        const midX = gx + gw / 2;
+        const midY = gy + gh / 2;
 
         ctx.save();
         ctx.strokeStyle = '#06b6d4';
@@ -323,20 +348,47 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         ctx.strokeRect(gx - 4, gy - 4, gw + 8, gh + 8);
 
         const handleSize = Math.max(8, pixelsPerInch * 0.15);
-        ctx.fillStyle = '#06b6d4';
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
+        const halfH = handleSize / 2;
 
-        const handles = [
-          [gx - 4, gy - 4],
-          [gx + gw + 4, gy - 4],
-          [gx - 4, gy + gh + 4],
-          [gx + gw + 4, gy + gh + 4],
+        const handles: { id: string; x: number; y: number }[] = [
+          { id: 'nw', x: gx - 4, y: gy - 4 },
+          { id: 'ne', x: gx + gw + 4, y: gy - 4 },
+          { id: 'sw', x: gx - 4, y: gy + gh + 4 },
+          { id: 'se', x: gx + gw + 4, y: gy + gh + 4 },
+          { id: 'n', x: midX, y: gy - 4 },
+          { id: 's', x: midX, y: gy + gh + 4 },
+          { id: 'w', x: gx - 4, y: midY },
+          { id: 'e', x: gx + gw + 4, y: midY },
         ];
-        handles.forEach(([hx, hy]) => {
-          ctx.fillRect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize);
-          ctx.strokeRect(hx - handleSize / 2, hy - handleSize / 2, handleSize, handleSize);
+
+        handles.forEach((h) => {
+          const isHov = hoveredHandle === h.id;
+          ctx.fillStyle = isHov ? '#ec4899' : '#ffffff';
+          ctx.strokeStyle = isHov ? '#ffffff' : '#06b6d4';
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(h.x - halfH, h.y - halfH, handleSize, handleSize);
+          ctx.strokeRect(h.x - halfH, h.y - halfH, handleSize, handleSize);
         });
+
+        // If edge path hovered, show Illustrator-style "path" tooltip badge
+        if (hoveredHandle && ['w', 'e', 'n', 's'].includes(hoveredHandle)) {
+          let bX = midX;
+          let bY = midY;
+          if (hoveredHandle === 'w') { bX = gx - 4; bY = midY; }
+          else if (hoveredHandle === 'e') { bX = gx + gw + 4; bY = midY; }
+          else if (hoveredHandle === 'n') { bX = midX; bY = gy - 4; }
+          else if (hoveredHandle === 's') { bX = midX; bY = gy + gh + 4; }
+
+          ctx.save();
+          ctx.font = 'bold 9px sans-serif';
+          ctx.fillStyle = 'rgba(236, 72, 153, 0.95)';
+          ctx.beginPath();
+          ctx.roundRect(bX + 6, bY - 6.5, 32, 13, 2);
+          ctx.fill();
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText('path', bX + 10, bY + 3);
+          ctx.restore();
+        }
 
         ctx.fillStyle = '#06b6d4';
         ctx.font = '700 11px monospace';
@@ -371,20 +423,26 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     layoutSettings,
     metrics.totalRollLengthInches,
     fontTick,
+    hoveredHandle,
   ]);
 
-  // Helper to check if click/mouse hit a corner resize handle
+  // Helper to check if click/mouse hit an 8-direction handle or edge boundary path
   const getHitResizeHandle = (
     clickX: number,
     clickY: number
-  ): { handle: 'nw' | 'ne' | 'sw' | 'se'; item?: CanvasItem; gBox?: any } | null => {
+  ): { handle: ResizeHandleType; item?: CanvasItem; gBox?: any } | null => {
     const handleHitRadius = Math.max(0.40, 12 / pixelsPerInch);
+    const edgeTolerance = Math.max(0.24, 9 / pixelsPerInch);
 
     if (selectedItemIds.length === 1) {
       const it = canvasItems.find((i) => i.id === selectedItemIds[0]);
       if (!it || it.locked) return null;
 
-      const corners: { handle: 'nw' | 'ne' | 'sw' | 'se'; x: number; y: number }[] = [
+      const midX = it.x + it.width / 2;
+      const midY = it.y + it.height / 2;
+
+      // 1. Check Corner Handles First
+      const corners: { handle: ResizeHandleType; x: number; y: number }[] = [
         { handle: 'nw', x: it.x, y: it.y },
         { handle: 'ne', x: it.x + it.width, y: it.y },
         { handle: 'sw', x: it.x, y: it.y + it.height },
@@ -392,17 +450,68 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       ];
 
       for (const c of corners) {
-        const dist = Math.hypot(clickX - c.x, clickY - c.y);
-        if (dist <= handleHitRadius) {
+        if (Math.hypot(clickX - c.x, clickY - c.y) <= handleHitRadius) {
           return { handle: c.handle, item: it };
         }
+      }
+
+      // 2. Check Midpoint Edge Handles
+      const midpoints: { handle: ResizeHandleType; x: number; y: number }[] = [
+        { handle: 'n', x: midX, y: it.y },
+        { handle: 's', x: midX, y: it.y + it.height },
+        { handle: 'w', x: it.x, y: midY },
+        { handle: 'e', x: it.x + it.width, y: midY },
+      ];
+
+      for (const m of midpoints) {
+        if (Math.hypot(clickX - m.x, clickY - m.y) <= handleHitRadius) {
+          return { handle: m.handle, item: it };
+        }
+      }
+
+      // 3. Check Edge Boundary Paths (Adobe Illustrator path edge hover)
+      // Left edge path
+      if (
+        Math.abs(clickX - it.x) <= edgeTolerance &&
+        clickY >= it.y - 0.1 &&
+        clickY <= it.y + it.height + 0.1
+      ) {
+        return { handle: 'w', item: it };
+      }
+      // Right edge path
+      if (
+        Math.abs(clickX - (it.x + it.width)) <= edgeTolerance &&
+        clickY >= it.y - 0.1 &&
+        clickY <= it.y + it.height + 0.1
+      ) {
+        return { handle: 'e', item: it };
+      }
+      // Top edge path
+      if (
+        Math.abs(clickY - it.y) <= edgeTolerance &&
+        clickX >= it.x - 0.1 &&
+        clickX <= it.x + it.width + 0.1
+      ) {
+        return { handle: 'n', item: it };
+      }
+      // Bottom edge path
+      if (
+        Math.abs(clickY - (it.y + it.height)) <= edgeTolerance &&
+        clickX >= it.x - 0.1 &&
+        clickX <= it.x + it.width + 0.1
+      ) {
+        return { handle: 's', item: it };
       }
     } else if (selectedItemIds.length > 1) {
       const selectedList = canvasItems.filter((i) => selectedItemIds.includes(i.id));
       const gBox = getGroupBoundingBox(selectedList);
       if (!gBox) return null;
 
-      const corners: { handle: 'nw' | 'ne' | 'sw' | 'se'; x: number; y: number }[] = [
+      const midX = gBox.x + gBox.width / 2;
+      const midY = gBox.y + gBox.height / 2;
+
+      // Corners
+      const corners: { handle: ResizeHandleType; x: number; y: number }[] = [
         { handle: 'nw', x: gBox.x, y: gBox.y },
         { handle: 'ne', x: gBox.x + gBox.width, y: gBox.y },
         { handle: 'sw', x: gBox.x, y: gBox.y + gBox.height },
@@ -410,17 +519,60 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       ];
 
       for (const c of corners) {
-        const dist = Math.hypot(clickX - c.x, clickY - c.y);
-        if (dist <= handleHitRadius) {
+        if (Math.hypot(clickX - c.x, clickY - c.y) <= handleHitRadius) {
           return { handle: c.handle, gBox };
         }
+      }
+
+      // Midpoints
+      const midpoints: { handle: ResizeHandleType; x: number; y: number }[] = [
+        { handle: 'n', x: midX, y: gBox.y },
+        { handle: 's', x: midX, y: gBox.y + gBox.height },
+        { handle: 'w', x: gBox.x, y: midY },
+        { handle: 'e', x: gBox.x + gBox.width, y: midY },
+      ];
+
+      for (const m of midpoints) {
+        if (Math.hypot(clickX - m.x, clickY - m.y) <= handleHitRadius) {
+          return { handle: m.handle, gBox };
+        }
+      }
+
+      // Edge Paths
+      if (
+        Math.abs(clickX - gBox.x) <= edgeTolerance &&
+        clickY >= gBox.y - 0.1 &&
+        clickY <= gBox.y + gBox.height + 0.1
+      ) {
+        return { handle: 'w', gBox };
+      }
+      if (
+        Math.abs(clickX - (gBox.x + gBox.width)) <= edgeTolerance &&
+        clickY >= gBox.y - 0.1 &&
+        clickY <= gBox.y + gBox.height + 0.1
+      ) {
+        return { handle: 'e', gBox };
+      }
+      if (
+        Math.abs(clickY - gBox.y) <= edgeTolerance &&
+        clickX >= gBox.x - 0.1 &&
+        clickX <= gBox.x + gBox.width + 0.1
+      ) {
+        return { handle: 'n', gBox };
+      }
+      if (
+        Math.abs(clickY - (gBox.y + gBox.height)) <= edgeTolerance &&
+        clickX >= gBox.x - 0.1 &&
+        clickX <= gBox.x + gBox.width + 0.1
+      ) {
+        return { handle: 's', gBox };
       }
     }
 
     return null;
   };
 
-  // Handle Mouse Down & Interactive Selection / Corner Resizing
+  // Handle Mouse Down & Interactive Selection / 8-Direction Resizing
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -429,7 +581,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     const clickX = (e.clientX - rect.left) / pixelsPerInch - PASTEBOARD_MARGIN_X;
     const clickY = (e.clientY - rect.top) / pixelsPerInch - PASTEBOARD_MARGIN_Y;
 
-    // 1. Check if user clicked on a corner resize handle of an active selection
+    // 1. Check if user clicked on a resize handle or edge path of an active selection
     const hitHandle = getHitResizeHandle(clickX, clickY);
     if (hitHandle) {
       setIsResizing(true);
@@ -532,13 +684,19 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     const mouseX = (e.clientX - rect.left) / pixelsPerInch - PASTEBOARD_MARGIN_X;
     const mouseY = (e.clientY - rect.top) / pixelsPerInch - PASTEBOARD_MARGIN_Y;
 
-    // Update cursor icon based on hover
+    // Update cursor icon and hover status based on edge / handle hover
     if (!isDragging && !isResizing && !selectionBox) {
       const hitHandle = getHitResizeHandle(mouseX, mouseY);
+      setHoveredHandle(hitHandle ? hitHandle.handle : null);
+
       if (hitHandle) {
-        if (hitHandle.handle === 'nw' || hitHandle.handle === 'se') {
+        if (hitHandle.handle === 'w' || hitHandle.handle === 'e') {
+          canvas.style.cursor = 'ew-resize';
+        } else if (hitHandle.handle === 'n' || hitHandle.handle === 's') {
+          canvas.style.cursor = 'ns-resize';
+        } else if (hitHandle.handle === 'nw' || hitHandle.handle === 'se') {
           canvas.style.cursor = 'nwse-resize';
-        } else {
+        } else if (hitHandle.handle === 'ne' || hitHandle.handle === 'sw') {
           canvas.style.cursor = 'nesw-resize';
         }
       } else {
@@ -554,7 +712,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       }
     }
 
-    // Handle corner resizing
+    // Handle 8-direction fluid scaling
     if (isResizing && activeResizeHandle && initialResizeState) {
       if (initialResizeState.singleItem) {
         const init = initialResizeState.singleItem;
@@ -563,22 +721,41 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         let newW = init.width;
         let newH = init.height;
 
-        if (activeResizeHandle === 'se') {
-          newW = Math.max(0.5, mouseX - init.x);
-          newH = Math.max(0.5, mouseY - init.y);
-        } else if (activeResizeHandle === 'sw') {
-          newW = Math.max(0.5, init.x + init.width - mouseX);
-          newX = mouseX;
-          newH = Math.max(0.5, mouseY - init.y);
-        } else if (activeResizeHandle === 'ne') {
-          newW = Math.max(0.5, mouseX - init.x);
-          newH = Math.max(0.5, init.y + init.height - mouseY);
-          newY = mouseY;
-        } else if (activeResizeHandle === 'nw') {
-          newW = Math.max(0.5, init.x + init.width - mouseX);
-          newX = mouseX;
-          newH = Math.max(0.5, init.y + init.height - mouseY);
-          newY = mouseY;
+        switch (activeResizeHandle) {
+          case 'e':
+            newW = Math.max(0.3, mouseX - init.x);
+            break;
+          case 'w':
+            newW = Math.max(0.3, init.x + init.width - mouseX);
+            newX = mouseX;
+            break;
+          case 's':
+            newH = Math.max(0.3, mouseY - init.y);
+            break;
+          case 'n':
+            newH = Math.max(0.3, init.y + init.height - mouseY);
+            newY = mouseY;
+            break;
+          case 'se':
+            newW = Math.max(0.3, mouseX - init.x);
+            newH = Math.max(0.3, mouseY - init.y);
+            break;
+          case 'sw':
+            newW = Math.max(0.3, init.x + init.width - mouseX);
+            newX = mouseX;
+            newH = Math.max(0.3, mouseY - init.y);
+            break;
+          case 'ne':
+            newW = Math.max(0.3, mouseX - init.x);
+            newH = Math.max(0.3, init.y + init.height - mouseY);
+            newY = mouseY;
+            break;
+          case 'nw':
+            newW = Math.max(0.3, init.x + init.width - mouseX);
+            newX = mouseX;
+            newH = Math.max(0.3, init.y + init.height - mouseY);
+            newY = mouseY;
+            break;
         }
 
         setCanvasItems((prev) =>
@@ -598,19 +775,44 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         const gBox = initialResizeState.groupBBox;
         let newGW = gBox.width;
         let newGH = gBox.height;
+        let originX = gBox.x;
+        let originY = gBox.y;
 
-        if (activeResizeHandle === 'se') {
-          newGW = Math.max(1, mouseX - gBox.x);
-          newGH = Math.max(1, mouseY - gBox.y);
-        } else if (activeResizeHandle === 'sw') {
-          newGW = Math.max(1, gBox.x + gBox.width - mouseX);
-          newGH = Math.max(1, mouseY - gBox.y);
-        } else if (activeResizeHandle === 'ne') {
-          newGW = Math.max(1, mouseX - gBox.x);
-          newGH = Math.max(1, gBox.y + gBox.height - mouseY);
-        } else if (activeResizeHandle === 'nw') {
-          newGW = Math.max(1, gBox.x + gBox.width - mouseX);
-          newGH = Math.max(1, gBox.y + gBox.height - mouseY);
+        switch (activeResizeHandle) {
+          case 'e':
+            newGW = Math.max(1, mouseX - gBox.x);
+            break;
+          case 'w':
+            newGW = Math.max(1, gBox.x + gBox.width - mouseX);
+            originX = mouseX;
+            break;
+          case 's':
+            newGH = Math.max(1, mouseY - gBox.y);
+            break;
+          case 'n':
+            newGH = Math.max(1, gBox.y + gBox.height - mouseY);
+            originY = mouseY;
+            break;
+          case 'se':
+            newGW = Math.max(1, mouseX - gBox.x);
+            newGH = Math.max(1, mouseY - gBox.y);
+            break;
+          case 'sw':
+            newGW = Math.max(1, gBox.x + gBox.width - mouseX);
+            originX = mouseX;
+            newGH = Math.max(1, mouseY - gBox.y);
+            break;
+          case 'ne':
+            newGW = Math.max(1, mouseX - gBox.x);
+            newGH = Math.max(1, gBox.y + gBox.height - mouseY);
+            originY = mouseY;
+            break;
+          case 'nw':
+            newGW = Math.max(1, gBox.x + gBox.width - mouseX);
+            originX = mouseX;
+            newGH = Math.max(1, gBox.y + gBox.height - mouseY);
+            originY = mouseY;
+            break;
         }
 
         const scaleX = newGW / gBox.width;
@@ -624,8 +826,8 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
             const relY = orig.y - gBox.y;
             return {
               ...it,
-              x: parseFloat((gBox.x + relX * scaleX).toFixed(2)),
-              y: parseFloat((gBox.y + relY * scaleY).toFixed(2)),
+              x: parseFloat((originX + relX * scaleX).toFixed(2)),
+              y: parseFloat((originY + relY * scaleY).toFixed(2)),
               width: parseFloat((orig.width * scaleX).toFixed(2)),
               height: parseFloat((orig.height * scaleY).toFixed(2)),
             };
@@ -688,12 +890,178 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     setDragStartPos(null);
   };
 
+  // Split Multi-Digit Numbers into Independent Movable Single Digits
+  const handleSplitSelectedDigits = (targetItem?: CanvasItem) => {
+    const targetIds = targetItem ? [targetItem.id] : selectedItemIds;
+    if (targetIds.length === 0) return;
+
+    let didSplitAny = false;
+    const newItemsList: CanvasItem[] = [];
+    const newSelectedIds: string[] = [];
+    const createdLogs: DigitSplitLogEntry[] = [];
+
+    canvasItems.forEach((it) => {
+      if (targetIds.includes(it.id) && it.itemType === 'number' && it.number.replace(/\D/g, '').length > 1) {
+        didSplitAny = true;
+        const digits = it.number.replace(/\D/g, '').split('');
+        const itemH = it.height;
+        let runningX = it.x;
+        const splitLocs: any[] = [];
+
+        digits.forEach((digit, idx) => {
+          const tightDim = calculateTightTextDimensions(digit, 'number', it.preset, itemH);
+          const digitId = `${it.id}-d${idx}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+          const digitItem: CanvasItem = {
+            id: digitId,
+            orderId: it.orderId,
+            itemType: 'number',
+            customerName: it.customerName ? `${it.customerName} (Digit ${digit})` : `Digit ${digit}`,
+            number: digit,
+            designCode: it.designCode,
+            preset: it.preset,
+            x: parseFloat(runningX.toFixed(2)),
+            y: it.y,
+            width: tightDim.widthInches,
+            height: itemH,
+            rotation: it.rotation || 0,
+            zIndex: it.zIndex + idx,
+            locked: false,
+            garmentSize: it.garmentSize,
+            customColorOverride: it.customColorOverride,
+            customStrokeOverride: it.customStrokeOverride,
+          };
+          newItemsList.push(digitItem);
+          newSelectedIds.push(digitItem.id);
+          splitLocs.push({
+            digit,
+            itemId: digitId,
+            x: digitItem.x,
+            y: digitItem.y,
+            width: digitItem.width,
+            height: digitItem.height,
+            shelfRowIndex: 1,
+          });
+          runningX += tightDim.widthInches + 0.05; // clean gap between digits
+        });
+
+        createdLogs.push({
+          id: `log-man-${it.id}-${Date.now()}`,
+          orderId: it.orderId,
+          customerName: it.customerName,
+          originalNumber: it.number,
+          reason: 'manual_unbundle',
+          digits: splitLocs,
+          spaceSavedInches: parseFloat((it.width * 0.35).toFixed(2)),
+          timestamp: new Date().toLocaleTimeString(),
+        });
+      } else {
+        newItemsList.push(it);
+      }
+    });
+
+    if (didSplitAny) {
+      setCanvasItems(newItemsList);
+      setSelectedItemIds(newSelectedIds);
+      setModificationLogs((prev) => [...createdLogs, ...prev]);
+    }
+  };
+
+  // Merge Multiple Selected Single Digits back into a Single Combined Number Item
+  const handleMergeSelectedDigits = () => {
+    const selected = canvasItems.filter((i) => selectedItemIds.includes(i.id) && i.itemType === 'number');
+    if (selected.length < 2) return;
+
+    // Sort selected digits from left to right
+    selected.sort((a, b) => a.x - b.x);
+
+    const mergedDigitsStr = selected.map((s) => s.number).join('');
+    const firstItem = selected[0];
+    const avgH = selected.reduce((acc, s) => acc + s.height, 0) / selected.length;
+    const tightCombined = calculateTightTextDimensions(mergedDigitsStr, 'number', firstItem.preset, avgH);
+
+    const mergedItem: CanvasItem = {
+      id: `${firstItem.orderId}-merged-${Date.now()}`,
+      orderId: firstItem.orderId,
+      itemType: 'number',
+      customerName: firstItem.customerName.replace(/ \(Digit .*\)/, '') || `Number ${mergedDigitsStr}`,
+      number: mergedDigitsStr,
+      designCode: firstItem.designCode,
+      preset: firstItem.preset,
+      x: firstItem.x,
+      y: firstItem.y,
+      width: tightCombined.widthInches,
+      height: parseFloat(avgH.toFixed(2)),
+      rotation: firstItem.rotation || 0,
+      zIndex: Math.max(...selected.map((s) => s.zIndex)),
+      locked: false,
+      garmentSize: firstItem.garmentSize,
+    };
+
+    const remainingItems = canvasItems.filter((i) => !selectedItemIds.includes(i.id));
+    setCanvasItems([...remainingItems, mergedItem]);
+    setSelectedItemIds([mergedItem.id]);
+
+    // Update modification logs
+    const selIds = new Set(selectedItemIds);
+    setModificationLogs((prev) =>
+      prev.filter((l) => !l.digits.some((d) => selIds.has(d.itemId)))
+    );
+  };
+
+  // Merge from a specific Modification Log Entry
+  const handleMergeFromLog = (logEntry: DigitSplitLogEntry) => {
+    const digitIds = logEntry.digits.map((d) => d.itemId);
+    const selected = canvasItems.filter((i) => digitIds.includes(i.id));
+    if (selected.length < 1) return;
+
+    selected.sort((a, b) => a.x - b.x);
+    const mergedDigitsStr = logEntry.originalNumber;
+    const firstItem = selected[0];
+    const avgH = selected.reduce((acc, s) => acc + s.height, 0) / selected.length;
+    const tightCombined = calculateTightTextDimensions(mergedDigitsStr, 'number', firstItem.preset, avgH);
+
+    const mergedItem: CanvasItem = {
+      id: `${logEntry.orderId}-merged-${Date.now()}`,
+      orderId: logEntry.orderId,
+      itemType: 'number',
+      customerName: logEntry.customerName || `Number ${mergedDigitsStr}`,
+      number: mergedDigitsStr,
+      designCode: firstItem.designCode,
+      preset: firstItem.preset,
+      x: firstItem.x,
+      y: firstItem.y,
+      width: tightCombined.widthInches,
+      height: parseFloat(avgH.toFixed(2)),
+      rotation: firstItem.rotation || 0,
+      zIndex: Math.max(...selected.map((s) => s.zIndex)),
+      locked: false,
+      garmentSize: firstItem.garmentSize,
+    };
+
+    const remainingItems = canvasItems.filter((i) => !digitIds.includes(i.id));
+    setCanvasItems([...remainingItems, mergedItem]);
+    setSelectedItemIds([mergedItem.id]);
+    setModificationLogs((prev) => prev.filter((l) => l.id !== logEntry.id));
+  };
+
+  // Locate and Highlight on Canvas from Modification Tracker
+  const handleLocateOnCanvas = (itemIds: string[]) => {
+    setSelectedItemIds(itemIds);
+    const items = canvasItems.filter((i) => itemIds.includes(i.id));
+    if (items.length > 0 && containerRef.current) {
+      const minY = Math.min(...items.map((i) => i.y));
+      const targetScroll = (minY + PASTEBOARD_MARGIN_Y) * (pixelsPerInch * zoom) - 100;
+      window.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' });
+    }
+  };
+
   // Re-Pack Layout Handler
   const handleRePack = () => {
     if (orders.length === 0) return;
     const result = generateAutoNestingLayout(orders, layoutSettings);
     setCanvasItems(result.items);
     setMetrics(result.metrics);
+    setModificationLogs(result.modificationLogs || []);
   };
 
   // Single or Batch Rotation Handler
@@ -1021,6 +1389,59 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
             <Scissors className="w-3.5 h-3.5" />
             <span>Cut Lines</span>
           </button>
+
+          {/* Smart Digit Unbundling Strategy Selector */}
+          <div className="flex items-center space-x-2">
+            <span className="text-xs text-amber-400/90 font-mono uppercase flex items-center space-x-1">
+              <Split className="w-3.5 h-3.5" />
+              <span>Double Digits:</span>
+            </span>
+            <select
+              value={layoutSettings.digitNestingMode || (layoutSettings.splitDigitsForNesting ? 'smart_unbundle' : 'smart_unbundle')}
+              onChange={(e) => {
+                const mode = e.target.value as DigitNestingMode;
+                const updatedSettings: LayoutSettings = {
+                  ...layoutSettings,
+                  digitNestingMode: mode,
+                  splitDigitsForNesting: mode !== 'intact',
+                };
+                setLayoutSettings(updatedSettings);
+                if (orders.length > 0) {
+                  const result = generateAutoNestingLayout(orders, updatedSettings);
+                  setCanvasItems(result.items);
+                  setMetrics(result.metrics);
+                  setModificationLogs(result.modificationLogs || []);
+                }
+              }}
+              className="bg-zinc-950 text-amber-300 text-xs px-2.5 py-1.5 rounded border border-amber-500/40 focus:outline-none font-mono font-bold"
+              title="Select how double-digit numbers are unbundled and nested to fill empty DTF gap pockets"
+            >
+              <option value="smart_unbundle">⚡ Smart Gap Fill (Recommended)</option>
+              <option value="split_all">🗂️ Split All (Max Density)</option>
+              <option value="intact">🔒 Keep Intact (No Split)</option>
+            </select>
+          </div>
+
+          {/* Modification Tracker Tab Launcher */}
+          <button
+            onClick={() => setActiveSideTab('tracker')}
+            className={`flex items-center space-x-1.5 text-xs font-semibold uppercase tracking-wider px-3 py-1.5 rounded transition-all ${
+              activeSideTab === 'tracker'
+                ? 'bg-amber-500 text-zinc-950 font-bold shadow-md shadow-amber-500/20'
+                : 'bg-zinc-950 text-zinc-300 border border-zinc-800 hover:border-amber-500/50 hover:text-amber-300'
+            }`}
+            title="Open the Modification Tracker Log Panel"
+          >
+            <Split className="w-3.5 h-3.5" />
+            <span>Modification Log</span>
+            {modificationLogs.length > 0 && (
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-extrabold ${
+                activeSideTab === 'tracker' ? 'bg-zinc-950 text-amber-400' : 'bg-amber-500/30 text-amber-300 border border-amber-500/40'
+              }`}>
+                {modificationLogs.length}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Auto Nesting Strategy Buttons */}
@@ -1107,8 +1528,69 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
         {/* Selected Item Inspector Panel - Sticky synchronized alongside viewport scrolling */}
         <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-4 lg:self-start max-h-[calc(100vh-2rem)] overflow-y-auto pr-1">
-          {/* Item Controls Card */}
-          <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-5 shadow-xl">
+          {/* Side Panel Tab Selector */}
+          <div className="flex items-center space-x-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800 shadow-inner">
+            <button
+              onClick={() => setActiveSideTab('inspector')}
+              className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-bold uppercase tracking-wider font-mono flex items-center justify-center space-x-1.5 transition-all ${
+                activeSideTab === 'inspector'
+                  ? 'bg-red-600 text-white shadow-lg'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>Inspector</span>
+              {selectedItemIds.length > 0 && (
+                <span className="text-[9px] px-1.5 py-0.2 bg-zinc-950/80 rounded-full font-bold">
+                  {selectedItemIds.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveSideTab('tracker')}
+              className={`flex-1 py-2 px-2.5 rounded-lg text-xs font-bold uppercase tracking-wider font-mono flex items-center justify-center space-x-1.5 transition-all ${
+                activeSideTab === 'tracker'
+                  ? 'bg-amber-500 text-zinc-950 shadow-lg'
+                  : 'text-zinc-400 hover:text-amber-300'
+              }`}
+            >
+              <Split className="w-3.5 h-3.5" />
+              <span>Modification Log</span>
+              {modificationLogs.length > 0 && (
+                <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                  activeSideTab === 'tracker' ? 'bg-zinc-950 text-amber-400' : 'bg-amber-500/30 text-amber-300'
+                }`}>
+                  {modificationLogs.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {activeSideTab === 'tracker' ? (
+            /* Modification Tracker Log Panel */
+            <ModificationTrackerPanel
+              modificationLogs={modificationLogs}
+              canvasItems={canvasItems}
+              selectedItemIds={selectedItemIds}
+              onSelectItems={handleLocateOnCanvas}
+              onMergeDigits={handleMergeFromLog}
+              onUnbundleNumber={handleSplitSelectedDigits}
+              layoutSettings={layoutSettings}
+              onChangeLayoutSettings={(newSettings) => {
+                setLayoutSettings(newSettings);
+                if (orders.length > 0) {
+                  const result = generateAutoNestingLayout(orders, newSettings);
+                  setCanvasItems(result.items);
+                  setMetrics(result.metrics);
+                  setModificationLogs(result.modificationLogs || []);
+                }
+              }}
+              onRePack={handleRePack}
+            />
+          ) : (
+            /* Item Controls Card */
+            <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-5 shadow-xl">
             <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center justify-between mb-4 border-b border-zinc-800 pb-3">
               <span className="flex items-center space-x-2">
                 <Sliders className="w-4 h-4 text-red-400" />
@@ -1167,6 +1649,26 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                     ))}
                   </div>
                 </div>
+
+                {/* Digit Splitting Control for Multi-Digit Numbers */}
+                {singleSelectedItem.itemType === 'number' && singleSelectedItem.number.replace(/\D/g, '').length > 1 && (
+                  <div className="bg-amber-950/30 border border-amber-500/40 p-3 rounded-lg space-y-2">
+                    <div className="flex items-center space-x-2 text-amber-300 text-xs font-bold uppercase font-mono">
+                      <Split className="w-4 h-4 text-amber-400" />
+                      <span>Multi-Digit Number Optimization</span>
+                    </div>
+                    <p className="text-[10px] text-amber-200/70 font-mono">
+                      Split "{singleSelectedItem.number}" into independent movable digits to fill narrow DTF gaps and minimize film waste.
+                    </p>
+                    <button
+                      onClick={() => handleSplitSelectedDigits()}
+                      className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-bold uppercase font-mono rounded shadow flex items-center justify-center space-x-1.5 transition-all"
+                    >
+                      <Split className="w-3.5 h-3.5" />
+                      <span>Split into Single Digits</span>
+                    </button>
+                  </div>
+                )}
 
                 {/* Action Buttons */}
                 <div className="grid grid-cols-2 gap-2">
@@ -1470,6 +1972,48 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                   </div>
                 </div>
 
+                {/* Batch Digit Optimization (Split / Merge) */}
+                {(() => {
+                  const selItems = canvasItems.filter((i) => selectedItemIds.includes(i.id));
+                  const multiDigitNumbers = selItems.filter((i) => i.itemType === 'number' && i.number.replace(/\D/g, '').length > 1);
+                  const selectedNumbers = selItems.filter((i) => i.itemType === 'number');
+
+                  if (multiDigitNumbers.length === 0 && selectedNumbers.length < 2) return null;
+
+                  return (
+                    <div className="bg-amber-950/30 border border-amber-500/40 p-3 rounded-lg space-y-2">
+                      <div className="flex items-center space-x-2 text-amber-300 text-xs font-bold uppercase font-mono">
+                        <Split className="w-4 h-4 text-amber-400" />
+                        <span>Digit Splitting &amp; Merging</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        {multiDigitNumbers.length > 0 && (
+                          <button
+                            onClick={() => handleSplitSelectedDigits()}
+                            className="py-1.5 px-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-[10px] font-bold uppercase font-mono rounded shadow flex items-center justify-center space-x-1"
+                            title="Split all selected multi-digit numbers into independent digits"
+                          >
+                            <Unlink className="w-3.5 h-3.5" />
+                            <span>Split Digits ({multiDigitNumbers.length})</span>
+                          </button>
+                        )}
+
+                        {selectedNumbers.length >= 2 && (
+                          <button
+                            onClick={handleMergeSelectedDigits}
+                            className="py-1.5 px-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-[10px] font-bold uppercase font-mono rounded shadow flex items-center justify-center space-x-1"
+                            title="Merge selected single digits left-to-right into a single number item"
+                          >
+                            <Link className="w-3.5 h-3.5" />
+                            <span>Merge Digits ({selectedNumbers.length})</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Batch Free Angle Rotation */}
                 <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800 space-y-2">
                   <span className="text-zinc-400 text-[10px] uppercase font-bold block">
@@ -1517,6 +2061,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
               </div>
             )}
           </div>
+          )}
 
           {/* Roll Print Metrics Dashboard */}
           <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-5 shadow-xl font-mono text-xs space-y-3">
