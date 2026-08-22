@@ -97,10 +97,17 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 }) => {
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const [activeResizeHandle, setActiveResizeHandle] = useState<'nw' | 'ne' | 'sw' | 'se' | null>(null);
   const [dragStartPos, setDragStartPos] = useState<{ x: number; y: number } | null>(null);
   const [initialItemPositions, setInitialItemPositions] = useState<Map<string, { x: number; y: number }>>(
     new Map()
   );
+  const [initialResizeState, setInitialResizeState] = useState<{
+    singleItem?: { id: string; x: number; y: number; width: number; height: number };
+    groupItems?: { id: string; x: number; y: number; width: number; height: number }[];
+    groupBBox?: { x: number; y: number; width: number; height: number };
+  } | null>(null);
 
   const [selectionBox, setSelectionBox] = useState<{
     startX: number;
@@ -366,7 +373,54 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     fontTick,
   ]);
 
-  // Handle Mouse Down & Interactive Selection
+  // Helper to check if click/mouse hit a corner resize handle
+  const getHitResizeHandle = (
+    clickX: number,
+    clickY: number
+  ): { handle: 'nw' | 'ne' | 'sw' | 'se'; item?: CanvasItem; gBox?: any } | null => {
+    const handleHitRadius = Math.max(0.40, 12 / pixelsPerInch);
+
+    if (selectedItemIds.length === 1) {
+      const it = canvasItems.find((i) => i.id === selectedItemIds[0]);
+      if (!it || it.locked) return null;
+
+      const corners: { handle: 'nw' | 'ne' | 'sw' | 'se'; x: number; y: number }[] = [
+        { handle: 'nw', x: it.x, y: it.y },
+        { handle: 'ne', x: it.x + it.width, y: it.y },
+        { handle: 'sw', x: it.x, y: it.y + it.height },
+        { handle: 'se', x: it.x + it.width, y: it.y + it.height },
+      ];
+
+      for (const c of corners) {
+        const dist = Math.hypot(clickX - c.x, clickY - c.y);
+        if (dist <= handleHitRadius) {
+          return { handle: c.handle, item: it };
+        }
+      }
+    } else if (selectedItemIds.length > 1) {
+      const selectedList = canvasItems.filter((i) => selectedItemIds.includes(i.id));
+      const gBox = getGroupBoundingBox(selectedList);
+      if (!gBox) return null;
+
+      const corners: { handle: 'nw' | 'ne' | 'sw' | 'se'; x: number; y: number }[] = [
+        { handle: 'nw', x: gBox.x, y: gBox.y },
+        { handle: 'ne', x: gBox.x + gBox.width, y: gBox.y },
+        { handle: 'sw', x: gBox.x, y: gBox.y + gBox.height },
+        { handle: 'se', x: gBox.x + gBox.width, y: gBox.y + gBox.height },
+      ];
+
+      for (const c of corners) {
+        const dist = Math.hypot(clickX - c.x, clickY - c.y);
+        if (dist <= handleHitRadius) {
+          return { handle: c.handle, gBox };
+        }
+      }
+    }
+
+    return null;
+  };
+
+  // Handle Mouse Down & Interactive Selection / Corner Resizing
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -375,7 +429,38 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     const clickX = (e.clientX - rect.left) / pixelsPerInch - PASTEBOARD_MARGIN_X;
     const clickY = (e.clientY - rect.top) / pixelsPerInch - PASTEBOARD_MARGIN_Y;
 
-    // Find top-most clicked item (reverse z-order)
+    // 1. Check if user clicked on a corner resize handle of an active selection
+    const hitHandle = getHitResizeHandle(clickX, clickY);
+    if (hitHandle) {
+      setIsResizing(true);
+      setActiveResizeHandle(hitHandle.handle);
+      if (hitHandle.item) {
+        setInitialResizeState({
+          singleItem: {
+            id: hitHandle.item.id,
+            x: hitHandle.item.x,
+            y: hitHandle.item.y,
+            width: hitHandle.item.width,
+            height: hitHandle.item.height,
+          },
+        });
+      } else if (hitHandle.gBox) {
+        const selectedList = canvasItems.filter((i) => selectedItemIds.includes(i.id));
+        setInitialResizeState({
+          groupBBox: hitHandle.gBox,
+          groupItems: selectedList.map((i) => ({
+            id: i.id,
+            x: i.x,
+            y: i.y,
+            width: i.width,
+            height: i.height,
+          })),
+        });
+      }
+      return;
+    }
+
+    // 2. Find top-most clicked item (reverse z-order)
     const clickedItem = [...canvasItems].reverse().find((it) => {
       const bbox = getItemBoundingBox(it);
       return (
@@ -447,6 +532,109 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     const mouseX = (e.clientX - rect.left) / pixelsPerInch - PASTEBOARD_MARGIN_X;
     const mouseY = (e.clientY - rect.top) / pixelsPerInch - PASTEBOARD_MARGIN_Y;
 
+    // Update cursor icon based on hover
+    if (!isDragging && !isResizing && !selectionBox) {
+      const hitHandle = getHitResizeHandle(mouseX, mouseY);
+      if (hitHandle) {
+        if (hitHandle.handle === 'nw' || hitHandle.handle === 'se') {
+          canvas.style.cursor = 'nwse-resize';
+        } else {
+          canvas.style.cursor = 'nesw-resize';
+        }
+      } else {
+        const isOverSelected = canvasItems.some(
+          (it) =>
+            selectedItemIds.includes(it.id) &&
+            mouseX >= it.x &&
+            mouseX <= it.x + it.width &&
+            mouseY >= it.y &&
+            mouseY <= it.y + it.height
+        );
+        canvas.style.cursor = isOverSelected ? 'move' : 'crosshair';
+      }
+    }
+
+    // Handle corner resizing
+    if (isResizing && activeResizeHandle && initialResizeState) {
+      if (initialResizeState.singleItem) {
+        const init = initialResizeState.singleItem;
+        let newX = init.x;
+        let newY = init.y;
+        let newW = init.width;
+        let newH = init.height;
+
+        if (activeResizeHandle === 'se') {
+          newW = Math.max(0.5, mouseX - init.x);
+          newH = Math.max(0.5, mouseY - init.y);
+        } else if (activeResizeHandle === 'sw') {
+          newW = Math.max(0.5, init.x + init.width - mouseX);
+          newX = mouseX;
+          newH = Math.max(0.5, mouseY - init.y);
+        } else if (activeResizeHandle === 'ne') {
+          newW = Math.max(0.5, mouseX - init.x);
+          newH = Math.max(0.5, init.y + init.height - mouseY);
+          newY = mouseY;
+        } else if (activeResizeHandle === 'nw') {
+          newW = Math.max(0.5, init.x + init.width - mouseX);
+          newX = mouseX;
+          newH = Math.max(0.5, init.y + init.height - mouseY);
+          newY = mouseY;
+        }
+
+        setCanvasItems((prev) =>
+          prev.map((it) =>
+            it.id === init.id
+              ? {
+                  ...it,
+                  x: parseFloat(newX.toFixed(2)),
+                  y: parseFloat(newY.toFixed(2)),
+                  width: parseFloat(newW.toFixed(2)),
+                  height: parseFloat(newH.toFixed(2)),
+                }
+              : it
+          )
+        );
+      } else if (initialResizeState.groupItems && initialResizeState.groupBBox) {
+        const gBox = initialResizeState.groupBBox;
+        let newGW = gBox.width;
+        let newGH = gBox.height;
+
+        if (activeResizeHandle === 'se') {
+          newGW = Math.max(1, mouseX - gBox.x);
+          newGH = Math.max(1, mouseY - gBox.y);
+        } else if (activeResizeHandle === 'sw') {
+          newGW = Math.max(1, gBox.x + gBox.width - mouseX);
+          newGH = Math.max(1, mouseY - gBox.y);
+        } else if (activeResizeHandle === 'ne') {
+          newGW = Math.max(1, mouseX - gBox.x);
+          newGH = Math.max(1, gBox.y + gBox.height - mouseY);
+        } else if (activeResizeHandle === 'nw') {
+          newGW = Math.max(1, gBox.x + gBox.width - mouseX);
+          newGH = Math.max(1, gBox.y + gBox.height - mouseY);
+        }
+
+        const scaleX = newGW / gBox.width;
+        const scaleY = newGH / gBox.height;
+
+        setCanvasItems((prev) =>
+          prev.map((it) => {
+            const orig = initialResizeState.groupItems?.find((g) => g.id === it.id);
+            if (!orig) return it;
+            const relX = orig.x - gBox.x;
+            const relY = orig.y - gBox.y;
+            return {
+              ...it,
+              x: parseFloat((gBox.x + relX * scaleX).toFixed(2)),
+              y: parseFloat((gBox.y + relY * scaleY).toFixed(2)),
+              width: parseFloat((orig.width * scaleX).toFixed(2)),
+              height: parseFloat((orig.height * scaleY).toFixed(2)),
+            };
+          })
+        );
+      }
+      return;
+    }
+
     if (selectionBox) {
       const updatedBox = { ...selectionBox, currentX: mouseX, currentY: mouseY };
       setSelectionBox(updatedBox);
@@ -493,6 +681,9 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
   const handleMouseUp = () => {
     setIsDragging(false);
+    setIsResizing(false);
+    setActiveResizeHandle(null);
+    setInitialResizeState(null);
     setSelectionBox(null);
     setDragStartPos(null);
   };
@@ -871,7 +1062,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       </div>
 
       {/* Main Grid: Interactive Canvas + Item Inspector Side Panel */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start relative">
         {/* Canvas Area */}
         <div className="lg:col-span-8 overflow-x-auto bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-2xl flex flex-col items-center">
           {/* Top Ruler Header with Pasteboard Bounds */}
@@ -896,7 +1087,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
           <div
             ref={containerRef}
-            className="relative border-2 border-zinc-800 rounded overflow-hidden cursor-crosshair shadow-2xl bg-[#141418]"
+            className="relative border-2 border-zinc-800 rounded overflow-hidden shadow-2xl bg-[#141418]"
             style={{ width: `${canvasWidthPx}px` }}
           >
             <canvas
@@ -910,12 +1101,12 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
           <p className="text-xs text-zinc-500 mt-3 flex items-center space-x-2 font-mono">
             <BoxSelect className="w-3.5 h-3.5 text-red-400" />
-            <span>Illustrator Pasteboard Workspace: Park extra items outside the 39" sheet box, or drag items into the active sheet.</span>
+            <span>Illustrator Pasteboard Workspace: Park extra items outside the 39" sheet box, or drag items into the active sheet. Drag corners to resize/squeeze elements.</span>
           </p>
         </div>
 
-        {/* Selected Item Inspector Panel */}
-        <div className="lg:col-span-4 space-y-6">
+        {/* Selected Item Inspector Panel - Sticky synchronized alongside viewport scrolling */}
+        <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-4 lg:self-start max-h-[calc(100vh-2rem)] overflow-y-auto pr-1">
           {/* Item Controls Card */}
           <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-5 shadow-xl">
             <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center justify-between mb-4 border-b border-zinc-800 pb-3">

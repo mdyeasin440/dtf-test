@@ -173,8 +173,14 @@ export function generateAutoNestingLayout(
       let itemW = block.w;
       let itemH = block.h;
 
-      // Check if block fits in current row strictly within 39" roll width
-      if (currentX + itemW > rollWidth - 0.02 && currentX > margin) {
+      // Determine flexible overflow allowance outside the standard designated roll width:
+      // - For numbers: 2.5 to 3.0 inches allowance before forcing a row wrap
+      // - For names: 2.0 to 2.5+ inches allowance before forcing a row wrap
+      const overflowAllowance = block.itemType === 'number' ? 2.85 : 2.50;
+      const maxAllowedRowWidth = rollWidth + overflowAllowance;
+
+      // Check if block fits in current row with natural uncompressed sizing within allowance
+      if (currentX + itemW > maxAllowedRowWidth && currentX > margin) {
         // Wrap cleanly to next shelf row down
         currentX = margin;
         currentY += shelfHeight + margin;

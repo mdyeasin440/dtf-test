@@ -279,8 +279,8 @@ function renderNameText(
     // Straight text - Exact Adobe Illustrator envelope scaling
     const metrics = ctx.measureText(text);
     const measuredW = metrics.width || 1;
-    // Fit text to physical bounding box without artificially stretching character spacing
-    const scaleX = measuredW > 0 ? Math.min(wPx / measuredW, 1.05) : 1.0;
+    // Scale text precisely to match physical box bounds without forced artificial compression
+    const scaleX = measuredW > 0 ? (wPx / measuredW) : 1.0;
 
     ctx.save();
     ctx.translate(centerX, centerY);
@@ -489,7 +489,7 @@ function renderNumberText(
   // Measure actual text width at exact physical height
   const metrics = ctx.measureText(numberStr);
   const measuredW = metrics.width || 1;
-  const scaleX = measuredW > 0 ? Math.min(wPx / measuredW, 1.05) : 1.0;
+  const scaleX = measuredW > 0 ? (wPx / measuredW) : 1.0;
 
   ctx.save();
   ctx.translate(centerX, centerY);
