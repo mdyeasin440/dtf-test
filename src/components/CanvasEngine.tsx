@@ -169,6 +169,83 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     }
   }, []);
 
+  // Keyboard Arrow Key Nudging & Shortcuts Listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing inside text inputs, textareas, or selects
+      const activeTag = document.activeElement?.tagName?.toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
+        return;
+      }
+
+      if (selectedItemIds.length === 0) return;
+
+      // Nudge amount: Default 0.10" (fine adjustment), Shift + Arrow: 0.50" (faster nudge)
+      const nudgeAmount = e.shiftKey ? 0.50 : 0.10;
+
+      switch (e.key) {
+        case 'ArrowUp':
+          e.preventDefault();
+          setCanvasItems((prev) =>
+            prev.map((it) =>
+              selectedItemIds.includes(it.id)
+                ? { ...it, y: Math.max(0, parseFloat((it.y - nudgeAmount).toFixed(2))) }
+                : it
+            )
+          );
+          break;
+
+        case 'ArrowDown':
+          e.preventDefault();
+          setCanvasItems((prev) =>
+            prev.map((it) =>
+              selectedItemIds.includes(it.id)
+                ? { ...it, y: parseFloat((it.y + nudgeAmount).toFixed(2)) }
+                : it
+            )
+          );
+          break;
+
+        case 'ArrowLeft':
+          e.preventDefault();
+          setCanvasItems((prev) =>
+            prev.map((it) =>
+              selectedItemIds.includes(it.id)
+                ? { ...it, x: Math.max(-PASTEBOARD_MARGIN_X, parseFloat((it.x - nudgeAmount).toFixed(2))) }
+                : it
+            )
+          );
+          break;
+
+        case 'ArrowRight':
+          e.preventDefault();
+          setCanvasItems((prev) =>
+            prev.map((it) =>
+              selectedItemIds.includes(it.id)
+                ? { ...it, x: parseFloat((it.x + nudgeAmount).toFixed(2)) }
+                : it
+            )
+          );
+          break;
+
+        case 'Delete':
+        case 'Backspace':
+          e.preventDefault();
+          setCanvasItems((prev) => prev.filter((it) => !selectedItemIds.includes(it.id)));
+          setSelectedItemIds([]);
+          break;
+
+        case 'Escape':
+          e.preventDefault();
+          setSelectedItemIds([]);
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedItemIds]);
+
   const PASTEBOARD_MARGIN_X = 10; // 10 inches left and right pasteboard workspace
   const PASTEBOARD_MARGIN_Y = 3;  // 3 inches top and bottom pasteboard workspace
 
@@ -860,8 +937,18 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
       setSelectedItemIds(highlighted);
     } else if (isDragging && dragStartPos) {
-      const dx = mouseX - dragStartPos.x;
-      const dy = mouseY - dragStartPos.y;
+      let dx = mouseX - dragStartPos.x;
+      let dy = mouseY - dragStartPos.y;
+
+      // Shift-Key Straight Axis Movement:
+      // When holding down Shift while dragging, lock movement to strictly horizontal or strictly vertical axis
+      if (e.shiftKey) {
+        if (Math.abs(dx) >= Math.abs(dy)) {
+          dy = 0; // Lock vertical drift, move only along X axis
+        } else {
+          dx = 0; // Lock horizontal drift, move only along Y axis
+        }
+      }
 
       setCanvasItems((prev) =>
         prev.map((it) => {
@@ -1520,10 +1607,26 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
             />
           </div>
 
-          <p className="text-xs text-zinc-500 mt-3 flex items-center space-x-2 font-mono">
-            <BoxSelect className="w-3.5 h-3.5 text-red-400" />
-            <span>Illustrator Pasteboard Workspace: Park extra items outside the 39" sheet box, or drag items into the active sheet. Drag corners to resize/squeeze elements.</span>
-          </p>
+          <div className="text-xs text-zinc-400 mt-3 font-mono space-y-1 bg-zinc-900/60 p-3 rounded-lg border border-zinc-800/80">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+              <span className="flex items-center space-x-1.5 text-zinc-300">
+                <kbd className="px-1.5 py-0.5 bg-zinc-950 border border-zinc-700 rounded text-amber-400 font-bold">Shift + Drag</kbd>
+                <span>Lock straight horizontal/vertical axis</span>
+              </span>
+              <span className="flex items-center space-x-1.5 text-zinc-300">
+                <kbd className="px-1.5 py-0.5 bg-zinc-950 border border-zinc-700 rounded text-amber-400 font-bold">↑ ↓ ← →</kbd>
+                <span>Nudge objects (0.10" or 0.50" with Shift)</span>
+              </span>
+              <span className="flex items-center space-x-1.5 text-zinc-300">
+                <kbd className="px-1.5 py-0.5 bg-zinc-950 border border-zinc-700 rounded text-red-400 font-bold">Delete / Backspace</kbd>
+                <span>Remove selected</span>
+              </span>
+            </div>
+            <p className="text-[11px] text-zinc-500 pt-1 border-t border-zinc-800/60 flex items-center space-x-1.5">
+              <BoxSelect className="w-3 h-3 text-red-400" />
+              <span>Independent Digits: Double digits (e.g., 22) are generated as separate objects side-by-side. Click any individual digit to move or rotate freely.</span>
+            </p>
+          </div>
         </div>
 
         {/* Selected Item Inspector Panel - Sticky synchronized alongside viewport scrolling */}

@@ -112,8 +112,20 @@ export function calculateTightTextDimensions(
               }
             }
           });
-          const widthInches = Math.max(0.5, totalWPx / scaleDpi);
-          return { widthInches: parseFloat(widthInches.toFixed(2)), heightInches };
+          const isCurved = Boolean(preset?.curvedTextArch || preset?.enableArcPath || preset?.textEffect === 'arc');
+          const arcDeg = typeof preset?.arcCurvature === 'number' ? preset.arcCurvature : (typeof preset?.arcAmount === 'number' ? preset.arcAmount : 24);
+          let finalHInches = heightInches;
+          let finalWInches = Math.max(0.5, totalWPx / scaleDpi);
+          if (isCurved && chars.length > 1) {
+            const arcRad = (Math.max(10, Math.min(60, arcDeg)) * Math.PI) / 180;
+            const radiusInches = Math.max(finalWInches * 0.70, finalWInches / (2 * Math.sin(arcRad / 2 || 0.2)));
+            const sagittaInches = radiusInches * (1 - Math.cos(arcRad / 2));
+            const extraEndTiltW = (heightInches * 0.5) * Math.sin(arcRad / 2) * 2;
+            finalWInches = parseFloat((finalWInches + extraEndTiltW + 0.10).toFixed(2));
+            finalHInches = parseFloat((heightInches * Math.cos(arcRad / 2) + sagittaInches + 0.15).toFixed(2));
+          }
+
+          return { widthInches: parseFloat(finalWInches.toFixed(2)), heightInches: finalHInches };
         } else {
           // Standard vector font measurement
           const fontSize = hPx * 0.95;
@@ -136,8 +148,21 @@ export function calculateTightTextDimensions(
           const strokeWidthPx = rawStrokeWidth > 0 ? rawStrokeWidth * (scaleDpi / 30) : 0;
           measuredWPx += strokeWidthPx * 2;
 
-          const widthInches = Math.max(0.5, measuredWPx / scaleDpi);
-          return { widthInches: parseFloat(widthInches.toFixed(2)), heightInches };
+          let widthInches = Math.max(0.5, measuredWPx / scaleDpi);
+
+          const isCurved = Boolean(preset?.curvedTextArch || preset?.enableArcPath || preset?.textEffect === 'arc');
+          const arcDeg = typeof preset?.arcCurvature === 'number' ? preset.arcCurvature : (typeof preset?.arcAmount === 'number' ? preset.arcAmount : 24);
+          let finalHInches = heightInches;
+          if (isCurved && cleanText.length > 1) {
+            const arcRad = (Math.max(10, Math.min(60, arcDeg)) * Math.PI) / 180;
+            const radiusInches = Math.max(widthInches * 0.70, widthInches / (2 * Math.sin(arcRad / 2 || 0.2)));
+            const sagittaInches = radiusInches * (1 - Math.cos(arcRad / 2));
+            const extraEndTiltW = (heightInches * 0.5) * Math.sin(arcRad / 2) * 2;
+            widthInches = parseFloat((widthInches + extraEndTiltW + 0.10).toFixed(2));
+            finalHInches = parseFloat((heightInches * Math.cos(arcRad / 2) + sagittaInches + 0.15).toFixed(2));
+          }
+
+          return { widthInches: parseFloat(widthInches.toFixed(2)), heightInches: finalHInches };
         }
       } else {
         // Number item measurement

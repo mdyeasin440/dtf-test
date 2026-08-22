@@ -157,6 +157,9 @@ function renderNameText(
   const userSpacing = typeof preset.letterSpacing === 'number' ? preset.letterSpacing : 3;
   const letterGapPx = Math.max(2, userSpacing * (scale / 30));
 
+  const isCurved = Boolean(preset.curvedTextArch || preset.enableArcPath || preset.textEffect === 'arc');
+  const arcDegrees = typeof preset.arcCurvature === 'number' ? preset.arcCurvature : (typeof preset.arcAmount === 'number' ? preset.arcAmount : 24);
+
   if (hasLetterAssets) {
     const spaceWidthPx = hPx * 0.20;
     const charWidths: number[] = [];
@@ -190,29 +193,39 @@ function renderNameText(
     const actualTotalW = rawTotalW * scaleX;
     const startX = Math.max(0, (wPx - actualTotalW) / 2);
 
-    let curX = startX;
-
     ctx.save();
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
-    if (preset.textEffect === 'arc') {
-      const arcRad = ((preset.arcAmount || 15) * Math.PI) / 180;
-      const radius = wPx / (2 * Math.sin(arcRad / 2 || 0.2));
-      const totalAngle = arcRad;
-      const startAngle = -totalAngle / 2;
-      const angleStep = totalAngle / Math.max(1, chars.length - 1);
+    if (isCurved && chars.length > 1) {
+      const arcRad = (Math.max(10, Math.min(60, arcDegrees)) * Math.PI) / 180;
+      const radius = Math.max(wPx * 0.75, (actualTotalW || wPx) / (2 * Math.sin(arcRad / 2 || 0.2)));
+      const sagitta = radius * (1 - Math.cos(arcRad / 2));
+      const charH = hPx * 0.85;
+      const y0 = Math.max(charH / 2, (hPx - (charH + sagitta)) / 2 + charH / 2);
       const centerX = wPx / 2;
-      const centerY = hPx / 2;
+      const centerY = y0 + radius;
+
+      // Calculate character midpoints along the arc
+      let accumW = 0;
+      const charMidpoints: number[] = [];
+      chars.forEach((_, i) => {
+        const cW = charWidths[i] * scaleX;
+        const mid = accumW + cW / 2;
+        charMidpoints.push(mid);
+        accumW += cW + (i < chars.length - 1 ? letterGapPx * scaleX : 0);
+      });
+      const totalArcLength = Math.max(1, accumW);
 
       chars.forEach((c, idx) => {
         const cW = charWidths[idx] * scaleX;
-        const angle = startAngle + idx * angleStep;
+        const progress = charMidpoints[idx] / totalArcLength; // 0 to 1
+        const angle = -arcRad / 2 + progress * arcRad;
 
         ctx.save();
         ctx.translate(
           centerX + radius * Math.sin(angle),
-          centerY + radius * (1 - Math.cos(angle))
+          centerY - radius * Math.cos(angle)
         );
         ctx.rotate(angle);
 
@@ -221,17 +234,17 @@ function renderNameText(
           if (url) {
             const img = getLoadedImage(url);
             if (img && img.complete && img.naturalWidth > 0) {
-              ctx.drawImage(img, -cW / 2, -hPx / 2, cW, hPx);
+              ctx.drawImage(img, -cW / 2, -charH / 2, cW, charH);
             } else {
               ctx.fillStyle = textColor;
-              ctx.font = `700 ${hPx * 0.85}px "${fontName}", sans-serif`;
+              ctx.font = `700 ${charH}px "${fontName}", sans-serif`;
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
               ctx.fillText(c, 0, 0);
             }
           } else {
             ctx.fillStyle = textColor;
-            ctx.font = `700 ${hPx * 0.85}px "${fontName}", sans-serif`;
+            ctx.font = `700 ${charH}px "${fontName}", sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(c, 0, 0);
@@ -248,7 +261,7 @@ function renderNameText(
           if (url) {
             const img = getLoadedImage(url);
             if (img && img.complete && img.naturalWidth > 0) {
-              ctx.drawImage(img, curX, 0, cW, hPx);
+              ctx.drawImage(img, curX, (hPx - hPx) / 2, cW, hPx);
             } else {
               ctx.fillStyle = textColor;
               ctx.font = `700 ${hPx * 0.85}px "${fontName}", sans-serif`;
@@ -293,20 +306,49 @@ function renderNameText(
   const centerX = wPx / 2;
   const centerY = hPx / 2;
 
-  if (preset.textEffect === 'arc') {
-    const arcRad = ((preset.arcAmount || 12) * Math.PI) / 180;
-    const radius = wPx / (2 * Math.sin(arcRad / 2 || 0.2));
+  if (isCurved && text.length > 1) {
+    const arcRad = (Math.max(10, Math.min(60, arcDegrees)) * Math.PI) / 180;
     const chars = text.split('');
-    const totalAngle = arcRad;
-    const startAngle = -totalAngle / 2;
-    const angleStep = totalAngle / Math.max(1, chars.length - 1);
+    
+    // Measure individual char widths for proportional non-distorted arc spacing
+    const charWidths: number[] = [];
+    let totalCharsW = 0;
+    chars.forEach((char, idx) => {
+      const w = ctx.measureText(char).width || fontSize * 0.5;
+      charWidths.push(w);
+      totalCharsW += w + (idx < chars.length - 1 ? letterGapPx : 0);
+    });
+
+    const scaleX = totalCharsW > 0 ? Math.min(1.0, wPx / totalCharsW) : 1.0;
+    const scaledTotalW = totalCharsW * scaleX;
+
+    const radius = Math.max(wPx * 0.70, (scaledTotalW || wPx) / (2 * Math.sin(arcRad / 2 || 0.2)));
+    const sagitta = radius * (1 - Math.cos(arcRad / 2));
+    const effectiveFontSize = fontSize * scaleX * 0.92;
+    ctx.font = `700 ${effectiveFontSize}px "${fontName}", "Bebas Neue", "Oswald", sans-serif`;
+
+    const y0 = Math.max(effectiveFontSize / 2, (hPx - (effectiveFontSize + sagitta)) / 2 + effectiveFontSize / 2);
+    const arcCenterY = y0 + radius;
+
+    // Calculate proportional midpoints along arc
+    let accumW = 0;
+    const charMidpoints: number[] = [];
+    chars.forEach((_, i) => {
+      const cW = charWidths[i] * scaleX;
+      const mid = accumW + cW / 2;
+      charMidpoints.push(mid);
+      accumW += cW + (i < chars.length - 1 ? letterGapPx * scaleX : 0);
+    });
+    const totalArcLen = Math.max(1, accumW);
 
     chars.forEach((char, idx) => {
-      const angle = startAngle + idx * angleStep;
+      const progress = charMidpoints[idx] / totalArcLen; // 0 to 1
+      const angle = -arcRad / 2 + progress * arcRad;
+
       ctx.save();
       ctx.translate(
         centerX + radius * Math.sin(angle),
-        centerY + radius * (1 - Math.cos(angle))
+        arcCenterY - radius * Math.cos(angle)
       );
       ctx.rotate(angle);
 
@@ -314,7 +356,18 @@ function renderNameText(
       ctx.fillStyle = textColor;
       ctx.fillText(char, 0, 0);
 
-      // 2. Draw Outer Stroke ONLY IF rawStrokeWidth > 0
+      // 2. Optional Inner Outline Accent
+      if (preset.hasInnerOutline && preset.innerOutlineColor) {
+        ctx.save();
+        ctx.strokeStyle = preset.innerOutlineColor;
+        ctx.lineWidth = Math.min(strokeWidthPx * 0.4, effectiveFontSize * 0.02);
+        ctx.lineJoin = 'miter';
+        ctx.miterLimit = 2;
+        ctx.strokeText(char, 0, 0);
+        ctx.restore();
+      }
+
+      // 3. Draw Outer Stroke ONLY IF rawStrokeWidth > 0
       if (strokeWidthPx > 0) {
         ctx.save();
         ctx.globalCompositeOperation = 'destination-over';

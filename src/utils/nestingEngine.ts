@@ -96,15 +96,15 @@ export function generateAutoNestingLayout(
   settings: LayoutSettings
 ): AutoNestingResult {
   const rollWidth = settings.rollWidthInches || 39.0;
-  // Minimal safe cutting gap: 0.10" (~2.5mm / 1-2mm)
-  const margin = settings.marginInches ?? 0.10;
+  // Minimal safe cutting gap: minimum 0.12" (recommended 0.20"-0.25" / ~5mm)
+  const margin = Math.max(0.12, settings.marginInches ?? 0.20);
   const canvasItems: CanvasItem[] = [];
   const modificationLogs: DigitSplitLogEntry[] = [];
 
   // Determine active digit unbundle mode
   const digitMode: DigitNestingMode = settings.digitNestingMode || (settings.splitDigitsForNesting ? 'smart_unbundle' : 'smart_unbundle');
 
-  // Step 1: Unroll OrderItems into individual name and number candidate blocks
+  // Step 1: Unroll OrderItems into individual categorized blocks
   interface UnpackedBlock {
     id: string;
     orderId: string;
@@ -120,9 +120,16 @@ export function generateAutoNestingLayout(
     digitIndex?: number;
     isSplitDigit?: boolean;
     parentNumber?: string;
+    isCurvedText?: boolean;
   }
 
-  const nameBlocks: UnpackedBlock[] = [];
+  const isCurvedPreset = (preset: any): boolean => {
+    if (!preset) return false;
+    return Boolean(preset.curvedTextArch || preset.enableArcPath || preset.textEffect === 'arc');
+  };
+
+  const straightNameBlocks: UnpackedBlock[] = [];
+  const curvedTextBlocks: UnpackedBlock[] = [];
   const numberBlocks: UnpackedBlock[] = [];
 
   orders.forEach((ord) => {
@@ -133,13 +140,15 @@ export function generateAutoNestingLayout(
     if (ord.garmentSize === 'Youth') scale = 0.8;
     if (ord.garmentSize === 'Infant') scale = 0.65;
 
+    const isCurved = isCurvedPreset(ord.matchedPreset);
+
     // Add Name block if customerName exists
     if (ord.customerName) {
       const presetNameHeight = ord.matchedPreset?.defaultNameHeightInches || 2.2;
       const nameHeight = presetNameHeight * scale;
       const tightName = calculateTightTextDimensions(ord.customerName, 'name', ord.matchedPreset, nameHeight);
 
-      nameBlocks.push({
+      const block: UnpackedBlock = {
         id: `${ord.id}-name`,
         orderId: ord.id,
         itemType: 'name',
@@ -150,7 +159,14 @@ export function generateAutoNestingLayout(
         w: tightName.widthInches,
         h: tightName.heightInches,
         garmentSize: ord.garmentSize,
-      });
+        isCurvedText: isCurved,
+      };
+
+      if (isCurved) {
+        curvedTextBlocks.push(block);
+      } else {
+        straightNameBlocks.push(block);
+      }
     }
 
     // Add Number block if number exists
@@ -159,8 +175,8 @@ export function generateAutoNestingLayout(
       const numHeight = presetNumHeight * scale;
       const cleanDigits = ord.number.trim().split('');
 
-      if (digitMode === 'split_all' && cleanDigits.length > 1) {
-        // Pre-split all digits
+      // Double-digit numbers unbundling
+      if (cleanDigits.length > 1) {
         cleanDigits.forEach((digit, digitIdx) => {
           const tightDigit = calculateTightTextDimensions(digit, 'number', ord.matchedPreset, numHeight);
           numberBlocks.push({
@@ -180,13 +196,13 @@ export function generateAutoNestingLayout(
           });
         });
 
-        // Record upfront split log
+        // Record split log for user tracking
         modificationLogs.push({
           id: `log-${ord.id}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
           orderId: ord.id,
           customerName: ord.customerName,
           originalNumber: ord.number,
-          reason: 'manual_unbundle',
+          reason: 'gap_optimization',
           digits: cleanDigits.map((d, i) => ({
             digit: d,
             itemId: `${ord.id}-number-d${i}`,
@@ -200,7 +216,7 @@ export function generateAutoNestingLayout(
           timestamp: new Date().toLocaleTimeString(),
         });
       } else {
-        // Candidate as intact number block with smart-unbundle capability
+        // Single digit number
         const tightNum = calculateTightTextDimensions(ord.number, 'number', ord.matchedPreset, numHeight);
         numberBlocks.push({
           id: `${ord.id}-number`,
@@ -213,7 +229,6 @@ export function generateAutoNestingLayout(
           w: tightNum.widthInches,
           h: tightNum.heightInches,
           garmentSize: ord.garmentSize,
-          rawDigits: cleanDigits.length > 1 ? cleanDigits : undefined,
         });
       }
     }
@@ -229,15 +244,14 @@ export function generateAutoNestingLayout(
   let zCounter = 1;
   let currentRowIndex = 1;
 
-  // 1. Pack Names First
-  const packNameBlocks = (blocks: UnpackedBlock[]) => {
-    const pool = [...blocks];
+  // 1. Pack Standard Straight Names First (Row by Row)
+  if (straightNameBlocks.length > 0) {
+    const pool = [...straightNameBlocks];
     while (pool.length > 0) {
       const block = pool.shift()!;
-      const overflowAllowance = 2.50;
-      const maxAllowedRowWidth = rollWidth + overflowAllowance;
 
-      if (currentX + block.w > maxAllowedRowWidth && currentX > margin) {
+      // Check if block exceeds 39" roll edge; wrap to new row cleanly
+      if (currentX + block.w > rollWidth - margin && currentX > margin) {
         currentX = margin;
         currentY += shelfHeight + margin;
         shelfHeight = 0;
@@ -266,281 +280,311 @@ export function generateAutoNestingLayout(
         shelfHeight = block.h;
       }
     }
-  };
 
-  packNameBlocks(nameBlocks);
-
-  // Advance Y to start Numbers section with a clean horizontal separation line
-  if (nameBlocks.length > 0) {
+    // Advance Y to start Numbers section with a clean horizontal separation buffer
     currentX = margin;
-    currentY += shelfHeight + margin + 0.15;
+    currentY += shelfHeight + margin + 0.20;
     shelfHeight = 0;
     currentRowIndex++;
   }
 
-  // 2. Smart Numbers Packing with Void Gap Scanning and Dynamic Unbundling
-  const packNumberBlocks = (blocks: UnpackedBlock[]) => {
-    const pool = [...blocks];
-    const overflowAllowance = 2.85;
-    const maxAllowedRowWidth = rollWidth + overflowAllowance;
+  // 2. Pack Standard Numbers with Void Gap Scanning and Dynamic Unbundling
+  if (numberBlocks.length > 0) {
+    const packNumberBlocks = (blocks: UnpackedBlock[]) => {
+      const pool = [...blocks];
+      const maxAllowedRowWidth = rollWidth - margin;
 
-    while (pool.length > 0) {
-      const block = pool[0];
-      const remainingRowSpace = maxAllowedRowWidth - currentX;
+      while (pool.length > 0) {
+        const block = pool[0];
+        const remainingRowSpace = maxAllowedRowWidth - currentX;
 
-      // Check if full block fits in current row shelf
-      if (block.w <= remainingRowSpace || currentX === margin) {
-        // Fits intact!
-        pool.shift();
+        // Check if full block fits in current row shelf
+        if (block.w <= remainingRowSpace || currentX === margin) {
+          pool.shift();
 
-        canvasItems.push({
-          id: block.id,
-          orderId: block.orderId,
-          itemType: block.itemType,
-          customerName: block.customerName,
-          number: block.number,
-          designCode: block.designCode,
-          preset: block.preset,
-          x: parseFloat(currentX.toFixed(2)),
-          y: parseFloat(currentY.toFixed(2)),
-          width: parseFloat(block.w.toFixed(2)),
-          height: parseFloat(block.h.toFixed(2)),
-          rotation: 0,
-          zIndex: zCounter++,
-          garmentSize: block.garmentSize,
-        });
+          canvasItems.push({
+            id: block.id,
+            orderId: block.orderId,
+            itemType: block.itemType,
+            customerName: block.customerName,
+            number: block.number,
+            designCode: block.designCode,
+            preset: block.preset,
+            x: parseFloat(currentX.toFixed(2)),
+            y: parseFloat(currentY.toFixed(2)),
+            width: parseFloat(block.w.toFixed(2)),
+            height: parseFloat(block.h.toFixed(2)),
+            rotation: 0,
+            zIndex: zCounter++,
+            garmentSize: block.garmentSize,
+          });
 
-        currentX += block.w + margin;
-        if (block.h > shelfHeight) shelfHeight = block.h;
-        continue;
-      }
+          currentX += block.w + margin;
+          if (block.h > shelfHeight) shelfHeight = block.h;
+          continue;
+        }
 
-      // Block does NOT fit in current row space intact (remainingRowSpace < block.w)
-      // SMART UNBUNDLE CHECK:
-      // If smart unbundling is active, can we split this double-digit (or another multi-digit in pool)
-      // so its first digit fits into this remaining gap, avoiding wasting an empty 4" - 8" gap on this row?
-      let didSmartUnbundle = false;
+        // Block does NOT fit in current row space intact
+        // SMART UNBUNDLE CHECK
+        let didSmartUnbundle = false;
 
-      if (digitMode === 'smart_unbundle' && remainingRowSpace >= 2.0) {
-        // 1. Check if the CURRENT block is multi-digit and its first digit fits in remainingRowSpace
-        if (block.rawDigits && block.rawDigits.length > 1) {
-          const firstDigit = block.rawDigits[0];
-          const firstDigitTight = calculateTightTextDimensions(firstDigit, 'number', block.preset, block.h);
+        if (digitMode === 'smart_unbundle' && remainingRowSpace >= 2.0) {
+          if (block.rawDigits && block.rawDigits.length > 1) {
+            const firstDigit = block.rawDigits[0];
+            const firstDigitTight = calculateTightTextDimensions(firstDigit, 'number', block.preset, block.h);
 
-          if (firstDigitTight.widthInches <= remainingRowSpace) {
-            // YES! Split current block into independent single digits!
-            pool.shift(); // remove compound block
-            didSmartUnbundle = true;
+            if (firstDigitTight.widthInches <= remainingRowSpace) {
+              pool.shift();
+              didSmartUnbundle = true;
 
-            const splitDigitsPlaced: DigitSplitLocation[] = [];
+              const splitDigitsPlaced: DigitSplitLocation[] = [];
 
-            // Place first digit in the remaining row pocket
-            const d1Id = `${block.orderId}-number-d0-${Date.now()}`;
-            const d1Item: CanvasItem = {
-              id: d1Id,
-              orderId: block.orderId,
-              itemType: 'number',
-              customerName: `${block.customerName} (Digit ${firstDigit})`,
-              number: firstDigit,
-              designCode: block.designCode,
-              preset: block.preset,
-              x: parseFloat(currentX.toFixed(2)),
-              y: parseFloat(currentY.toFixed(2)),
-              width: parseFloat(firstDigitTight.widthInches.toFixed(2)),
-              height: parseFloat(block.h.toFixed(2)),
-              rotation: 0,
-              zIndex: zCounter++,
-              garmentSize: block.garmentSize,
-            };
-            canvasItems.push(d1Item);
-            splitDigitsPlaced.push({
-              digit: firstDigit,
-              itemId: d1Id,
-              x: d1Item.x,
-              y: d1Item.y,
-              width: d1Item.width,
-              height: d1Item.height,
-              shelfRowIndex: currentRowIndex,
-            });
-
-            currentX += firstDigitTight.widthInches + margin;
-            if (block.h > shelfHeight) shelfHeight = block.h;
-
-            // Now wrap to next shelf row for the remaining digits
-            currentX = margin;
-            currentY += shelfHeight + margin;
-            shelfHeight = 0;
-            currentRowIndex++;
-
-            // Place remaining digits on the new row (or prepend to pool)
-            for (let dIdx = 1; dIdx < block.rawDigits.length; dIdx++) {
-              const remDigit = block.rawDigits[dIdx];
-              const remTight = calculateTightTextDimensions(remDigit, 'number', block.preset, block.h);
-              const remId = `${block.orderId}-number-d${dIdx}-${Date.now()}`;
-
-              const remItem: CanvasItem = {
-                id: remId,
+              // Place first digit in the remaining row pocket
+              const d1Id = `${block.orderId}-number-d0-${Date.now()}`;
+              const d1Item: CanvasItem = {
+                id: d1Id,
                 orderId: block.orderId,
                 itemType: 'number',
-                customerName: `${block.customerName} (Digit ${remDigit})`,
-                number: remDigit,
+                customerName: `${block.customerName} (Digit ${firstDigit})`,
+                number: firstDigit,
                 designCode: block.designCode,
                 preset: block.preset,
                 x: parseFloat(currentX.toFixed(2)),
                 y: parseFloat(currentY.toFixed(2)),
-                width: parseFloat(remTight.widthInches.toFixed(2)),
+                width: parseFloat(firstDigitTight.widthInches.toFixed(2)),
                 height: parseFloat(block.h.toFixed(2)),
                 rotation: 0,
                 zIndex: zCounter++,
                 garmentSize: block.garmentSize,
               };
-              canvasItems.push(remItem);
+              canvasItems.push(d1Item);
               splitDigitsPlaced.push({
-                digit: remDigit,
-                itemId: remId,
-                x: remItem.x,
-                y: remItem.y,
-                width: remItem.width,
-                height: remItem.height,
+                digit: firstDigit,
+                itemId: d1Id,
+                x: d1Item.x,
+                y: d1Item.y,
+                width: d1Item.width,
+                height: d1Item.height,
                 shelfRowIndex: currentRowIndex,
               });
 
-              currentX += remTight.widthInches + margin;
+              currentX += firstDigitTight.widthInches + margin;
               if (block.h > shelfHeight) shelfHeight = block.h;
+
+              // Wrap to next shelf row for the remaining digits
+              currentX = margin;
+              currentY += shelfHeight + margin;
+              shelfHeight = 0;
+              currentRowIndex++;
+
+              for (let dIdx = 1; dIdx < block.rawDigits.length; dIdx++) {
+                const remDigit = block.rawDigits[dIdx];
+                const remTight = calculateTightTextDimensions(remDigit, 'number', block.preset, block.h);
+                const remId = `${block.orderId}-number-d${dIdx}-${Date.now()}`;
+
+                const remItem: CanvasItem = {
+                  id: remId,
+                  orderId: block.orderId,
+                  itemType: 'number',
+                  customerName: `${block.customerName} (Digit ${remDigit})`,
+                  number: remDigit,
+                  designCode: block.designCode,
+                  preset: block.preset,
+                  x: parseFloat(currentX.toFixed(2)),
+                  y: parseFloat(currentY.toFixed(2)),
+                  width: parseFloat(remTight.widthInches.toFixed(2)),
+                  height: parseFloat(block.h.toFixed(2)),
+                  rotation: 0,
+                  zIndex: zCounter++,
+                  garmentSize: block.garmentSize,
+                };
+                canvasItems.push(remItem);
+                splitDigitsPlaced.push({
+                  digit: remDigit,
+                  itemId: remId,
+                  x: remItem.x,
+                  y: remItem.y,
+                  width: remItem.width,
+                  height: remItem.height,
+                  shelfRowIndex: currentRowIndex,
+                });
+
+                currentX += remTight.widthInches + margin;
+                if (block.h > shelfHeight) shelfHeight = block.h;
+              }
+
+              modificationLogs.push({
+                id: `log-${block.orderId}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                orderId: block.orderId,
+                customerName: block.customerName,
+                originalNumber: block.number,
+                reason: 'shelf_end_fill',
+                digits: splitDigitsPlaced,
+                spaceSavedInches: parseFloat((firstDigitTight.widthInches + 0.5).toFixed(2)),
+                timestamp: new Date().toLocaleTimeString(),
+              });
             }
-
-            // Record in Modification Log
-            modificationLogs.push({
-              id: `log-${block.orderId}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-              orderId: block.orderId,
-              customerName: block.customerName,
-              originalNumber: block.number,
-              reason: 'shelf_end_fill',
-              digits: splitDigitsPlaced,
-              spaceSavedInches: parseFloat((firstDigitTight.widthInches + 0.5).toFixed(2)),
-              timestamp: new Date().toLocaleTimeString(),
-            });
           }
-        }
 
-        // 2. If the current block was single digit or couldn't fit, scan candidate pool for ANY multi-digit
-        // whose first digit fits neatly into remainingRowSpace
-        if (!didSmartUnbundle) {
-          const candidateIdx = pool.findIndex((c) => {
-            if (!c.rawDigits || c.rawDigits.length <= 1) return false;
-            const tightFirst = calculateTightTextDimensions(c.rawDigits[0], 'number', c.preset, c.h);
-            return tightFirst.widthInches <= remainingRowSpace;
-          });
-
-          if (candidateIdx !== -1) {
-            const chosen = pool.splice(candidateIdx, 1)[0];
-            didSmartUnbundle = true;
-
-            const firstDigit = chosen.rawDigits![0];
-            const firstDigitTight = calculateTightTextDimensions(firstDigit, 'number', chosen.preset, chosen.h);
-            const splitDigitsPlaced: DigitSplitLocation[] = [];
-
-            // Place first digit in remaining gap
-            const d1Id = `${chosen.orderId}-number-d0-${Date.now()}`;
-            const d1Item: CanvasItem = {
-              id: d1Id,
-              orderId: chosen.orderId,
-              itemType: 'number',
-              customerName: `${chosen.customerName} (Digit ${firstDigit})`,
-              number: firstDigit,
-              designCode: chosen.designCode,
-              preset: chosen.preset,
-              x: parseFloat(currentX.toFixed(2)),
-              y: parseFloat(currentY.toFixed(2)),
-              width: parseFloat(firstDigitTight.widthInches.toFixed(2)),
-              height: parseFloat(chosen.h.toFixed(2)),
-              rotation: 0,
-              zIndex: zCounter++,
-              garmentSize: chosen.garmentSize,
-            };
-            canvasItems.push(d1Item);
-            splitDigitsPlaced.push({
-              digit: firstDigit,
-              itemId: d1Id,
-              x: d1Item.x,
-              y: d1Item.y,
-              width: d1Item.width,
-              height: d1Item.height,
-              shelfRowIndex: currentRowIndex,
+          if (!didSmartUnbundle) {
+            const candidateIdx = pool.findIndex((c) => {
+              if (!c.rawDigits || c.rawDigits.length <= 1) return false;
+              const tightFirst = calculateTightTextDimensions(c.rawDigits[0], 'number', c.preset, c.h);
+              return tightFirst.widthInches <= remainingRowSpace;
             });
 
-            currentX += firstDigitTight.widthInches + margin;
-            if (chosen.h > shelfHeight) shelfHeight = chosen.h;
+            if (candidateIdx !== -1) {
+              const chosen = pool.splice(candidateIdx, 1)[0];
+              didSmartUnbundle = true;
 
-            // Wrap to next shelf row for the other digits
-            currentX = margin;
-            currentY += shelfHeight + margin;
-            shelfHeight = 0;
-            currentRowIndex++;
+              const firstDigit = chosen.rawDigits![0];
+              const firstDigitTight = calculateTightTextDimensions(firstDigit, 'number', chosen.preset, chosen.h);
+              const splitDigitsPlaced: DigitSplitLocation[] = [];
 
-            // Place remaining digits on the new row
-            for (let dIdx = 1; dIdx < chosen.rawDigits!.length; dIdx++) {
-              const remDigit = chosen.rawDigits![dIdx];
-              const remTight = calculateTightTextDimensions(remDigit, 'number', chosen.preset, chosen.h);
-              const remId = `${chosen.orderId}-number-d${dIdx}-${Date.now()}`;
-
-              const remItem: CanvasItem = {
-                id: remId,
+              const d1Id = `${chosen.orderId}-number-d0-${Date.now()}`;
+              const d1Item: CanvasItem = {
+                id: d1Id,
                 orderId: chosen.orderId,
                 itemType: 'number',
-                customerName: `${chosen.customerName} (Digit ${remDigit})`,
-                number: remDigit,
+                customerName: `${chosen.customerName} (Digit ${firstDigit})`,
+                number: firstDigit,
                 designCode: chosen.designCode,
                 preset: chosen.preset,
                 x: parseFloat(currentX.toFixed(2)),
                 y: parseFloat(currentY.toFixed(2)),
-                width: parseFloat(remTight.widthInches.toFixed(2)),
+                width: parseFloat(firstDigitTight.widthInches.toFixed(2)),
                 height: parseFloat(chosen.h.toFixed(2)),
                 rotation: 0,
                 zIndex: zCounter++,
                 garmentSize: chosen.garmentSize,
               };
-              canvasItems.push(remItem);
+              canvasItems.push(d1Item);
               splitDigitsPlaced.push({
-                digit: remDigit,
-                itemId: remId,
-                x: remItem.x,
-                y: remItem.y,
-                width: remItem.width,
-                height: remItem.height,
+                digit: firstDigit,
+                itemId: d1Id,
+                x: d1Item.x,
+                y: d1Item.y,
+                width: d1Item.width,
+                height: d1Item.height,
                 shelfRowIndex: currentRowIndex,
               });
 
-              currentX += remTight.widthInches + margin;
+              currentX += firstDigitTight.widthInches + margin;
               if (chosen.h > shelfHeight) shelfHeight = chosen.h;
-            }
 
-            // Record in Modification Log
-            modificationLogs.push({
-              id: `log-${chosen.orderId}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-              orderId: chosen.orderId,
-              customerName: chosen.customerName,
-              originalNumber: chosen.number,
-              reason: 'smart_pocket_fill',
-              digits: splitDigitsPlaced,
-              spaceSavedInches: parseFloat((firstDigitTight.widthInches + 0.5).toFixed(2)),
-              timestamp: new Date().toLocaleTimeString(),
-            });
+              currentX = margin;
+              currentY += shelfHeight + margin;
+              shelfHeight = 0;
+              currentRowIndex++;
+
+              for (let dIdx = 1; dIdx < chosen.rawDigits!.length; dIdx++) {
+                const remDigit = chosen.rawDigits![dIdx];
+                const remTight = calculateTightTextDimensions(remDigit, 'number', chosen.preset, chosen.h);
+                const remId = `${chosen.orderId}-number-d${dIdx}-${Date.now()}`;
+
+                const remItem: CanvasItem = {
+                  id: remId,
+                  orderId: chosen.orderId,
+                  itemType: 'number',
+                  customerName: `${chosen.customerName} (Digit ${remDigit})`,
+                  number: remDigit,
+                  designCode: chosen.designCode,
+                  preset: chosen.preset,
+                  x: parseFloat(currentX.toFixed(2)),
+                  y: parseFloat(currentY.toFixed(2)),
+                  width: parseFloat(remTight.widthInches.toFixed(2)),
+                  height: parseFloat(chosen.h.toFixed(2)),
+                  rotation: 0,
+                  zIndex: zCounter++,
+                  garmentSize: chosen.garmentSize,
+                };
+                canvasItems.push(remItem);
+                splitDigitsPlaced.push({
+                  digit: remDigit,
+                  itemId: remId,
+                  x: remItem.x,
+                  y: remItem.y,
+                  width: remItem.width,
+                  height: remItem.height,
+                  shelfRowIndex: currentRowIndex,
+                });
+
+                currentX += remTight.widthInches + margin;
+                if (chosen.h > shelfHeight) shelfHeight = chosen.h;
+              }
+
+              modificationLogs.push({
+                id: `log-${chosen.orderId}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                orderId: chosen.orderId,
+                customerName: chosen.customerName,
+                originalNumber: chosen.number,
+                reason: 'smart_pocket_fill',
+                digits: splitDigitsPlaced,
+                spaceSavedInches: parseFloat((firstDigitTight.widthInches + 0.5).toFixed(2)),
+                timestamp: new Date().toLocaleTimeString(),
+              });
+            }
           }
         }
-      }
 
-      // If smart unbundling did not occur or wasn't needed, standard row wrap
-      if (!didSmartUnbundle) {
+        // Standard row wrap
+        if (!didSmartUnbundle) {
+          currentX = margin;
+          currentY += shelfHeight + margin;
+          shelfHeight = 0;
+          currentRowIndex++;
+        }
+      }
+    };
+
+    packNumberBlocks(numberBlocks);
+
+    // Advance Y to start Curved Text section with a clean horizontal separation buffer
+    currentX = margin;
+    currentY += shelfHeight + margin + 0.25;
+    shelfHeight = 0;
+    currentRowIndex++;
+  }
+
+  // 3. Pack Specialized Curved / Arched Text Elements at the Very End / Bottom of the Sheet
+  if (curvedTextBlocks.length > 0) {
+    const pool = [...curvedTextBlocks];
+    const curvedGap = Math.max(margin, 0.25); // Generous safety buffer for curved arches
+
+    while (pool.length > 0) {
+      const block = pool.shift()!;
+
+      // Check if block exceeds 39" roll edge; wrap to new row cleanly
+      if (currentX + block.w > rollWidth - curvedGap && currentX > curvedGap) {
         currentX = margin;
-        currentY += shelfHeight + margin;
+        currentY += shelfHeight + curvedGap;
         shelfHeight = 0;
         currentRowIndex++;
       }
-    }
-  };
 
-  packNumberBlocks(numberBlocks);
+      canvasItems.push({
+        id: block.id,
+        orderId: block.orderId,
+        itemType: block.itemType,
+        customerName: block.customerName,
+        number: block.number,
+        designCode: block.designCode,
+        preset: block.preset,
+        x: parseFloat(currentX.toFixed(2)),
+        y: parseFloat(currentY.toFixed(2)),
+        width: parseFloat(block.w.toFixed(2)),
+        height: parseFloat(block.h.toFixed(2)),
+        rotation: 0,
+        zIndex: zCounter++,
+        garmentSize: block.garmentSize,
+      });
+
+      currentX += block.w + curvedGap;
+      if (block.h > shelfHeight) {
+        shelfHeight = block.h;
+      }
+    }
+  }
 
   const totalRollHeight = Math.max(12.0, currentY + shelfHeight + margin);
 

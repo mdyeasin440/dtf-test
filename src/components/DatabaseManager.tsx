@@ -158,6 +158,9 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
       strokeColor: '#000000',
       strokeWidth: 4,
       textEffect: 'none',
+      curvedTextArch: false, // Curved / Arched text toggle OFF by default
+      enableArcPath: false,
+      arcCurvature: 24,
       isCustom: true,
       updatedAt: new Date().toISOString(),
       numberStyle: {
@@ -732,9 +735,16 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
             <div>
               {/* Top Code Badge & League */}
               <div className="flex items-center justify-between mb-3">
-                <span className="font-mono font-bold text-xs px-2.5 py-1 bg-red-600/10 text-red-400 border border-red-500/30 rounded">
-                  {preset.code}
-                </span>
+                <div className="flex items-center space-x-1.5">
+                  <span className="font-mono font-bold text-xs px-2.5 py-1 bg-red-600/10 text-red-400 border border-red-500/30 rounded">
+                    {preset.code}
+                  </span>
+                  {(preset.curvedTextArch || preset.enableArcPath || preset.textEffect === 'arc') && (
+                    <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded">
+                      ⚡ Arc {preset.arcCurvature || preset.arcAmount || 24}°
+                    </span>
+                  )}
+                </div>
                 <span className="text-[10px] font-mono uppercase text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
                   {preset.league}
                 </span>
@@ -745,18 +755,49 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
 
               {/* Live Preview Box */}
               <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 mb-4 flex flex-col items-center justify-center min-h-[110px] relative overflow-hidden">
-                <div
-                  className="text-center font-black tracking-wide mb-1"
-                  style={{
-                    fontFamily: preset.fontFamily,
-                    color: preset.textColor,
-                    WebkitTextStroke: `${preset.strokeWidth > 0 ? preset.strokeWidth / 2 : 0}px ${preset.strokeColor}`,
-                    fontSize: '20px',
-                    letterSpacing: `${preset.letterSpacing || 2}px`,
-                  }}
-                >
-                  RONALDO
-                </div>
+                {(preset.curvedTextArch || preset.enableArcPath || preset.textEffect === 'arc') ? (
+                  <svg className="w-full h-12 overflow-visible" viewBox="0 0 200 45">
+                    <defs>
+                      <path
+                        id={`card-arc-path-${preset.id}`}
+                        d={`M 10,${38 + ((preset.arcCurvature || 24) * 0.25)} Q 100,${12 - ((preset.arcCurvature || 24) * 0.2)} 190,${38 + ((preset.arcCurvature || 24) * 0.25)}`}
+                        fill="transparent"
+                      />
+                    </defs>
+                    <text
+                      fill={preset.textColor || '#FFFFFF'}
+                      stroke={preset.strokeColor || '#000000'}
+                      strokeWidth={preset.strokeWidth > 0 ? Math.min(2.5, preset.strokeWidth * 0.4) : 0}
+                      style={{
+                        fontFamily: preset.fontFamily || 'Oswald, sans-serif',
+                        fontWeight: 900,
+                        fontSize: '17px',
+                        letterSpacing: `${preset.letterSpacing || 2}px`,
+                      }}
+                    >
+                      <textPath
+                        href={`#card-arc-path-${preset.id}`}
+                        startOffset="50%"
+                        textAnchor="middle"
+                      >
+                        RONALDO
+                      </textPath>
+                    </text>
+                  </svg>
+                ) : (
+                  <div
+                    className="text-center font-black tracking-wide mb-1"
+                    style={{
+                      fontFamily: preset.fontFamily,
+                      color: preset.textColor,
+                      WebkitTextStroke: `${preset.strokeWidth > 0 ? preset.strokeWidth / 2 : 0}px ${preset.strokeColor}`,
+                      fontSize: '20px',
+                      letterSpacing: `${preset.letterSpacing || 2}px`,
+                    }}
+                  >
+                    RONALDO
+                  </div>
+                )}
 
                 {preset.numberAssets && (preset.numberAssets['7'] || Object.values(preset.numberAssets)[0]) ? (
                   <div className="h-12 flex items-center justify-center my-1">
@@ -974,6 +1015,158 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                     <Cloud className="w-3.5 h-3.5" />
                     <span>{uploadFontStatus}</span>
                   </p>
+                )}
+              </div>
+
+              {/* Specialized Text Shaping & Curved Text Arch Configuration */}
+              <div className={`p-4 rounded-xl border transition-all ${
+                editingPreset.curvedTextArch || editingPreset.enableArcPath || editingPreset.textEffect === 'arc'
+                  ? 'bg-gradient-to-r from-red-950/40 via-zinc-900 to-amber-950/30 border-red-500/50 shadow-lg'
+                  : 'bg-zinc-950 border-zinc-800'
+              }`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-1.5">
+                        <Sparkles className="w-4 h-4 text-red-400" />
+                        <span>Curved Text Arch / Enable Arc Path</span>
+                      </span>
+                      <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full font-bold uppercase ${
+                        editingPreset.curvedTextArch || editingPreset.enableArcPath || editingPreset.textEffect === 'arc'
+                          ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                          : 'bg-zinc-800 text-zinc-400 border border-zinc-700'
+                      }`}>
+                        {editingPreset.curvedTextArch || editingPreset.enableArcPath || editingPreset.textEffect === 'arc'
+                          ? '⚡ Curved Arc (ON)'
+                          : 'OFF (Straight Text)'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 font-mono">
+                      When enabled, name text automatically follows a smooth, proportional, and balanced upward arc curve (matching classic sports jersey arched text).
+                    </p>
+                  </div>
+
+                  {/* Toggle Switch */}
+                  <label className="relative inline-flex items-center cursor-pointer select-none shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(editingPreset.curvedTextArch || editingPreset.enableArcPath || editingPreset.textEffect === 'arc')}
+                      onChange={(e) => {
+                        const isChecked = e.target.checked;
+                        setEditingPreset({
+                          ...editingPreset,
+                          curvedTextArch: isChecked,
+                          enableArcPath: isChecked,
+                          textEffect: isChecked ? 'arc' : 'none',
+                          arcCurvature: editingPreset.arcCurvature || editingPreset.arcAmount || 24,
+                          arcAmount: editingPreset.arcAmount || editingPreset.arcCurvature || 24,
+                        });
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-12 h-6 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-zinc-400 peer-checked:after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
+                    <span className="ml-2.5 text-xs font-mono font-bold text-zinc-300">
+                      {Boolean(editingPreset.curvedTextArch || editingPreset.enableArcPath || editingPreset.textEffect === 'arc') ? 'ON' : 'OFF'}
+                    </span>
+                  </label>
+                </div>
+
+                {/* Expanded Controls when Arc Path is Enabled */}
+                {(editingPreset.curvedTextArch || editingPreset.enableArcPath || editingPreset.textEffect === 'arc') && (
+                  <div className="mt-4 pt-4 border-t border-zinc-800/80 space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs font-mono">
+                          <span className="text-zinc-300 font-bold uppercase text-[11px]">
+                            Arc Curvature Angle:
+                          </span>
+                          <span className="text-red-400 font-black px-2 py-0.5 bg-zinc-950 rounded border border-zinc-800">
+                            {editingPreset.arcCurvature || editingPreset.arcAmount || 24}°
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="10"
+                          max="45"
+                          step="1"
+                          value={editingPreset.arcCurvature || editingPreset.arcAmount || 24}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value) || 24;
+                            setEditingPreset({
+                              ...editingPreset,
+                              arcCurvature: val,
+                              arcAmount: val,
+                            });
+                          }}
+                          className="w-full accent-red-500 cursor-pointer"
+                        />
+                        <div className="flex items-center justify-between gap-1 pt-1">
+                          {[
+                            { label: 'Subtle', deg: 15 },
+                            { label: 'Classic Jersey', deg: 24 },
+                            { label: 'Pronounced', deg: 35 },
+                          ].map((presetArch) => {
+                            const currentVal = editingPreset.arcCurvature || editingPreset.arcAmount || 24;
+                            return (
+                              <button
+                                key={presetArch.deg}
+                                type="button"
+                                onClick={() =>
+                                  setEditingPreset({
+                                    ...editingPreset,
+                                    arcCurvature: presetArch.deg,
+                                    arcAmount: presetArch.deg,
+                                  })
+                                }
+                                className={`flex-1 py-1 px-2 text-[10px] font-mono font-bold uppercase rounded border transition-all ${
+                                  currentVal === presetArch.deg
+                                    ? 'bg-red-600 text-white border-red-500 shadow'
+                                    : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-zinc-200'
+                                }`}
+                              >
+                                {presetArch.label} ({presetArch.deg}°)
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Live Curved Arc Visual Preview */}
+                      <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800 flex flex-col items-center justify-center relative overflow-hidden h-24">
+                        <div className="absolute top-1 left-2 text-[9px] font-mono text-zinc-500 uppercase">
+                          Live Curve Preview (Balanced Arch)
+                        </div>
+                        <svg className="w-full h-16 overflow-visible" viewBox="0 0 300 60">
+                          <defs>
+                            <path
+                              id={`preview-arc-path-${editingPreset.id}`}
+                              d={`M 15,${52 + ((editingPreset.arcCurvature || 24) * 0.35)} Q 150,${16 - ((editingPreset.arcCurvature || 24) * 0.25)} 285,${52 + ((editingPreset.arcCurvature || 24) * 0.35)}`}
+                              fill="transparent"
+                            />
+                          </defs>
+                          <text
+                            fill={editingPreset.textColor || '#FFFFFF'}
+                            stroke={editingPreset.strokeColor || '#000000'}
+                            strokeWidth={editingPreset.strokeWidth ? Math.min(3, editingPreset.strokeWidth * 0.4) : 0}
+                            style={{
+                              fontFamily: editingPreset.fontFamily || 'Oswald, sans-serif',
+                              fontWeight: 900,
+                              fontSize: '20px',
+                              letterSpacing: `${editingPreset.letterSpacing || 2}px`,
+                            }}
+                          >
+                            <textPath
+                              href={`#preview-arc-path-${editingPreset.id}`}
+                              startOffset="50%"
+                              textAnchor="middle"
+                            >
+                              {editingPreset.teamName ? editingPreset.teamName.toUpperCase().slice(0, 12) : 'RONALDO'}
+                            </textPath>
+                          </text>
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -1386,17 +1579,23 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                     Text Effect
                   </label>
                   <select
-                    value={editingPreset.textEffect}
-                    onChange={(e) =>
+                    value={editingPreset.curvedTextArch || editingPreset.enableArcPath || editingPreset.textEffect === 'arc' ? 'arc' : editingPreset.textEffect}
+                    onChange={(e) => {
+                      const newEffect = e.target.value as any;
+                      const isArc = newEffect === 'arc';
                       setEditingPreset({
                         ...editingPreset,
-                        textEffect: e.target.value as any,
-                      })
-                    }
+                        textEffect: newEffect,
+                        curvedTextArch: isArc,
+                        enableArcPath: isArc,
+                        arcCurvature: editingPreset.arcCurvature || editingPreset.arcAmount || 24,
+                        arcAmount: editingPreset.arcAmount || editingPreset.arcCurvature || 24,
+                      });
+                    }}
                     className="w-full bg-zinc-900 text-white px-3 py-1.5 rounded border border-zinc-800 text-xs font-mono"
                   >
-                    <option value="none">Flat (Standard)</option>
-                    <option value="arc">Curved Arc</option>
+                    <option value="none">Flat (Standard Line)</option>
+                    <option value="arc">Curved Arch (Upward Arc Path)</option>
                     <option value="italic">Italic Slant</option>
                     <option value="drop-shadow">Drop Shadow</option>
                   </select>

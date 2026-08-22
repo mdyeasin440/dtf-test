@@ -28,6 +28,9 @@ export interface DesignPreset {
   innerOutlineColor?: string;
   textEffect: 'none' | 'arc' | 'italic' | 'drop-shadow' | 'stencil';
   arcAmount?: number; // degree of curve
+  curvedTextArch?: boolean; // Toggle for curved / arched text path (default: false / OFF)
+  enableArcPath?: boolean; // Compatible alias for curved path
+  arcCurvature?: number; // Arch curvature angle in degrees (e.g. 15-40, default 20)
   letterSpacing?: number; // spacing between letters
   numberStyle: NumberStyle;
   numberAssets?: Record<string, string>; // Map of digit '0'..'9' -> Data URL string (PNG/SVG image)

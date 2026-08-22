@@ -66,7 +66,7 @@ export default function App() {
     } catch (_) {}
     return {
       rollWidthInches: 39.0,
-      marginInches: 0.10, // Minimal, safe 1-2mm cut spacing
+      marginInches: 0.20, // Clean, safe cut spacing
       nestingStrategy: 'compact',
       packingMode: 'row_by_row_structured',
       showCutLines: true,
