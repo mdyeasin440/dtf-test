@@ -31,7 +31,7 @@ import {
 import { DesignPreset } from '../types';
 import { registerCustomFont } from '../utils/fontLoader';
 import { generateSampleNumberAssets } from '../utils/numberAssetHelper';
-import { generateSampleLetterAssets } from '../utils/letterAssetHelper';
+import { ALL_LETTER_KEYS, generateSampleLetterAssets } from '../utils/letterAssetHelper';
 import { trimTransparentImageCanvas } from '../utils/imageTrimmer';
 import {
   savePresetToD1,
@@ -458,9 +458,15 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
       return { type: 'number', key: baseName };
     }
 
-    // 2. Exact single letter A-Z
-    if ((targetScope === 'all' || targetScope === 'letters') && /^[a-zA-Z]$/.test(baseName)) {
-      return { type: 'letter', key: baseName.toUpperCase() };
+    // 2. Exact single letter A-Z or special characters (Ö, É, A')
+    if (targetScope === 'all' || targetScope === 'letters') {
+      const norm = baseName.toUpperCase();
+      if (norm === 'Ö' || norm === 'OE') return { type: 'letter', key: 'Ö' };
+      if (norm === 'É' || norm === 'E_ACUTE' || norm === 'E-ACUTE' || norm === 'EACUTE') return { type: 'letter', key: 'É' };
+      if (norm === "A'" || norm === 'A_APOS' || norm === 'A_QUOTE' || norm === 'A-APOS' || norm === 'A_PRIME' || norm === "K'" || norm === 'K_APOS') return { type: 'letter', key: "A'" };
+      if (/^[a-zA-Z]$/.test(baseName)) {
+        return { type: 'letter', key: baseName.toUpperCase() };
+      }
     }
 
     // 3. Number prefix patterns: "num_0", "number_1", "digit-2", "n3", "0_white", "0-jersey"
@@ -475,16 +481,30 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
       if (numBoundaryMatch) return { type: 'number', key: numBoundaryMatch[1] };
     }
 
-    // 4. Letter prefix patterns: "letter_a", "char_B", "let-C", "alpha_d", "name_e", "A_white", "B_font"
+    // 4. Letter prefix patterns: "letter_a", "char_B", "let-C", "alpha_d", "name_e", "A_white", "B_font", "letter_Ö", "letter_É", "letter_A'"
     if (targetScope === 'all' || targetScope === 'letters') {
+      const letSpecialMatch = baseName.match(/^(?:letter|char|let|alpha|name|font|l)[_\-\s]?(ö|é|a'|k'|oe|e_acute|a_apos|a_quote|k_apos)$/i);
+      if (letSpecialMatch) {
+        const sm = letSpecialMatch[1].toUpperCase();
+        if (sm === 'Ö' || sm === 'OE') return { type: 'letter', key: 'Ö' };
+        if (sm === 'É' || sm === 'E_ACUTE') return { type: 'letter', key: 'É' };
+        if (sm === "A'" || sm === 'A_APOS' || sm === 'A_QUOTE' || sm === "K'" || sm === 'K_APOS') return { type: 'letter', key: "A'" };
+      }
+
       const letPrefixMatch = baseName.match(/^(?:letter|char|let|alpha|name|font|l)[_\-\s]?([a-zA-Z])$/i);
       if (letPrefixMatch) return { type: 'letter', key: letPrefixMatch[1].toUpperCase() };
 
-      const letSuffixMatch = baseName.match(/^([a-zA-Z])[_\-\s](?:white|black|color|cut|stroke|gold|red|blue|vector|png|layer|jersey|font|char)/i);
-      if (letSuffixMatch) return { type: 'letter', key: letSuffixMatch[1].toUpperCase() };
+      const letSuffixMatch = baseName.match(/^([a-zA-ZöéÖÉ]|a'|k')[_\-\s](?:white|black|color|cut|stroke|gold|red|blue|vector|png|layer|jersey|font|char)/i);
+      if (letSuffixMatch) {
+        const sm = letSuffixMatch[1].toUpperCase();
+        return { type: 'letter', key: sm === "K'" ? "A'" : sm };
+      }
 
-      const letBoundaryMatch = baseName.match(/^[_\-\s]*([a-zA-Z])[_\-\s]*$/);
-      if (letBoundaryMatch) return { type: 'letter', key: letBoundaryMatch[1].toUpperCase() };
+      const letBoundaryMatch = baseName.match(/^[_\-\s]*([a-zA-ZöéÖÉ]|a'|k')[_\-\s]*$/i);
+      if (letBoundaryMatch) {
+        const sm = letBoundaryMatch[1].toUpperCase();
+        return { type: 'letter', key: sm === "K'" ? "A'" : sm };
+      }
     }
 
     // Scope specific fallback
@@ -1396,25 +1416,25 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                 </div>
               </div>
 
-              {/* Letter PNG Asset Grid (A-Z) */}
+              {/* Letter PNG Asset Grid (A-Z + Special: Ö, É, A') */}
               <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-800 pb-3">
                   <div>
                     <h3 className="text-xs font-bold text-red-400 uppercase tracking-wider flex items-center space-x-2">
                       <ImageIcon className="w-4 h-4" />
-                      <span>Upload Letter PNG Assets (A-Z) to Cloudflare R2</span>
+                      <span>Upload Letter & Special Character Assets (A-Z, Ö, É, A') to Cloudflare R2</span>
                     </h3>
                     <p className="text-[10px] text-zinc-500 font-mono">
-                      Optional custom PNG cuts for each letter A-Z uploaded to R2.
+                      Custom PNG cuts for A-Z letters and special characters (Ö, É, A') saved in R2.
                     </p>
                   </div>
                   <div className="flex items-center flex-wrap gap-2">
                     <label
                       className="cursor-pointer px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-red-400 text-[10px] font-bold uppercase tracking-wider rounded border border-zinc-800 flex items-center space-x-1"
-                      title="Upload a folder containing A.png - Z.png"
+                      title="Upload a folder containing letter assets (A-Z, Ö, É, A')"
                     >
                       <Folder className="w-3 h-3" />
-                      <span>Folder (A-Z)</span>
+                      <span>Folder</span>
                       <input
                         type="file"
                         {...({ webkitdirectory: '', directory: '', multiple: true } as any)}
@@ -1463,18 +1483,21 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-6 sm:grid-cols-13 gap-1.5 max-h-48 overflow-y-auto p-1 bg-zinc-900/40 rounded border border-zinc-800/80">
-                  {'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((letter) => {
+                <div className="grid grid-cols-6 sm:grid-cols-10 md:grid-cols-15 gap-1.5 max-h-52 overflow-y-auto p-1.5 bg-zinc-900/40 rounded border border-zinc-800/80">
+                  {ALL_LETTER_KEYS.map((letter) => {
                     const hasAsset = editingPreset.letterAssets && editingPreset.letterAssets[letter];
                     const isUploadingThis = uploadingAssetKey === `let-${letter}`;
+                    const isSpecialChar = ['Ö', 'É', "A'"].includes(letter);
                     return (
                       <div
                         key={letter}
                         className={`relative group bg-zinc-900 border ${
-                          hasAsset ? 'border-red-500/50' : 'border-zinc-800 hover:border-zinc-700'
+                          hasAsset
+                            ? isSpecialChar ? 'border-amber-500/70 shadow-sm shadow-amber-950/30' : 'border-red-500/50'
+                            : isSpecialChar ? 'border-amber-900/50 bg-amber-950/10 hover:border-amber-700/80' : 'border-zinc-800 hover:border-zinc-700'
                         } rounded p-1 flex flex-col items-center justify-between min-h-[75px] transition-all`}
                       >
-                        <span className="text-[9px] font-mono font-bold text-zinc-400 bg-zinc-950 px-1 rounded border border-zinc-800">
+                        <span className={`text-[9px] font-mono font-bold ${isSpecialChar ? 'text-amber-400 border-amber-800/80 bg-amber-950/40' : 'text-zinc-400 border-zinc-800 bg-zinc-950'} px-1 rounded border`}>
                           {letter}
                         </span>
 
@@ -1488,12 +1511,12 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                               className="max-h-6 max-w-full object-contain filter drop-shadow"
                             />
                           ) : (
-                            <span className="text-zinc-600 font-mono text-[10px] font-bold">{letter}</span>
+                            <span className={`${isSpecialChar ? 'text-amber-400/80' : 'text-zinc-600'} font-mono text-[10px] font-bold`}>{letter}</span>
                           )}
                         </div>
 
                         <div className="flex items-center space-x-1 w-full justify-center">
-                          <label className="cursor-pointer text-[8px] font-bold uppercase bg-red-600/20 hover:bg-red-600/30 text-red-400 px-1 py-0.5 rounded border border-red-500/30 transition-all text-center w-full truncate">
+                          <label className={`cursor-pointer text-[8px] font-bold uppercase ${isSpecialChar ? 'bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border-amber-500/30' : 'bg-red-600/20 hover:bg-red-600/30 text-red-400 border-red-500/30'} px-1 py-0.5 rounded border transition-all text-center w-full truncate`}>
                             {hasAsset ? 'Edit' : '+R2'}
                             <input
                               type="file"

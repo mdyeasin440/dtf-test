@@ -46,6 +46,24 @@ export function preloadAssetImage(url: string) {
   img.src = url;
 }
 
+// Tokenize customer names into character tokens including multi-char tokens like "A'" or "K'"
+export function tokenizeNameCharacters(text: string): string[] {
+  const upper = text.toUpperCase();
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < upper.length) {
+    if ((upper[i] === 'A' || upper[i] === 'a' || upper[i] === 'K' || upper[i] === 'k') && (upper[i + 1] === "'" || upper[i + 1] === '’' || upper[i + 1] === '`')) {
+      const tok = upper[i] === 'A' || upper[i] === 'a' ? "A'" : "A'";
+      tokens.push(tok);
+      i += 2;
+      continue;
+    }
+    tokens.push(upper[i]);
+    i++;
+  }
+  return tokens;
+}
+
 /**
  * Calculates exact-fit tight bounding box dimensions (width and height in inches)
  * for names and numbers without any excess padding or dead space.
@@ -72,8 +90,7 @@ export function calculateTightTextDimensions(
       if (itemType === 'name') {
         const fontName = preset?.fontFamily || 'Oswald';
         const letterAssets = preset?.letterAssets || {};
-        const upperText = cleanText.toUpperCase();
-        const chars = upperText.split('');
+        const chars = tokenizeNameCharacters(cleanText);
         const hasLetterAssets = chars.some((c) => c !== ' ' && Boolean(letterAssets[c]));
 
         const userSpacing = typeof preset?.letterSpacing === 'number' ? preset.letterSpacing : 3;
@@ -103,11 +120,11 @@ export function calculateTightTextDimensions(
                     return;
                   }
                 }
-                const defaultRatio = c === 'I' ? 0.18 : c === 'W' || c === 'M' ? 0.52 : c === 'J' || c === 'L' ? 0.30 : 0.35;
+                const defaultRatio = c === 'I' || c === "'" ? 0.18 : c === 'W' || c === 'M' ? 0.52 : c === "A'" || c === "K'" ? 0.58 : c === 'J' || c === 'L' ? 0.30 : 0.35;
                 totalWPx += hPx * defaultRatio + (i < chars.length - 1 ? letterGapPx : 0);
               } else {
                 // Typical condensed athletic jersey letter aspect ratio (tight bounding box)
-                const defaultRatio = c === 'I' ? 0.18 : c === 'W' || c === 'M' ? 0.52 : c === 'J' || c === 'L' ? 0.30 : 0.35;
+                const defaultRatio = c === 'I' || c === "'" ? 0.18 : c === 'W' || c === 'M' ? 0.52 : c === "A'" || c === "K'" ? 0.58 : c === 'J' || c === 'L' ? 0.30 : 0.35;
                 totalWPx += hPx * defaultRatio + (i < chars.length - 1 ? letterGapPx : 0);
               }
             }

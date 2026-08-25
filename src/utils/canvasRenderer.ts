@@ -1,6 +1,24 @@
 import { CanvasItem, LayoutSettings } from '../types';
 import { getCachedAssetAspectRatio, registerAssetAspectRatio } from './textMeasurement';
 
+// Tokenize customer names into character tokens including multi-char tokens like "A'" or "K'"
+export function tokenizeNameCharacters(text: string): string[] {
+  const upper = text.toUpperCase();
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < upper.length) {
+    if ((upper[i] === 'A' || upper[i] === 'a' || upper[i] === 'K' || upper[i] === 'k') && (upper[i + 1] === "'" || upper[i + 1] === '’' || upper[i + 1] === '`')) {
+      const tok = upper[i] === 'A' || upper[i] === 'a' ? "A'" : "A'";
+      tokens.push(tok);
+      i += 2;
+      continue;
+    }
+    tokens.push(upper[i]);
+    i++;
+  }
+  return tokens;
+}
+
 export function renderItemToCanvas(
   ctx: CanvasRenderingContext2D,
   item: CanvasItem,
@@ -150,8 +168,7 @@ function renderNameText(
 
   // Mode A: Dual Mode Check - Stitch Custom A-Z PNG Letter Assets if available
   const letterAssets = preset.letterAssets || {};
-  const upperText = text.toUpperCase();
-  const chars = upperText.split('');
+  const chars = tokenizeNameCharacters(text);
   const hasLetterAssets = chars.some((c) => c !== ' ' && Boolean(letterAssets[c]));
 
   const userSpacing = typeof preset.letterSpacing === 'number' ? preset.letterSpacing : 3;
@@ -180,7 +197,7 @@ function renderNameText(
           if (cachedRatio) {
             cW = hPx * cachedRatio;
           } else {
-            const defaultRatio = c === 'I' ? 0.18 : c === 'W' || c === 'M' ? 0.52 : c === 'J' || c === 'L' ? 0.30 : 0.35;
+            const defaultRatio = c === 'I' || c === "'" ? 0.18 : c === 'W' || c === 'M' ? 0.52 : c === "A'" || c === "K'" ? 0.58 : c === 'J' || c === 'L' ? 0.30 : 0.35;
             cW = hPx * defaultRatio;
           }
         }
