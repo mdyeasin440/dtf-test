@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ZoomIn,
   ZoomOut,
@@ -27,6 +27,9 @@ import {
   Unlink,
   Eye,
   CheckCircle2,
+  Undo2,
+  Redo2,
+  History,
 } from 'lucide-react';
 import { CanvasItem, DigitNestingMode, DigitSplitLogEntry, LayoutSettings, RollMetrics } from '../types';
 import { renderItemToCanvas, addImageLoadListener } from '../utils/canvasRenderer';
@@ -169,12 +172,112 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     }
   }, []);
 
-  // Keyboard Arrow Key Nudging & Shortcuts Listener
+  const canvasItemsRef = useRef<CanvasItem[]>(canvasItems);
+  useEffect(() => {
+    canvasItemsRef.current = canvasItems;
+  }, [canvasItems]);
+
+  // History stack for Undo / Redo (up to 60 snapshots)
+  const [history, setHistory] = useState<CanvasItem[][]>(() => [canvasItems]);
+  const [historyIndex, setHistoryIndex] = useState<number>(0);
+  const dragStartSnapshotRef = useRef<CanvasItem[] | null>(null);
+
+  // Sync initial canvasItems into history if history only had empty state on first real load
+  useEffect(() => {
+    if (history.length === 1 && history[0].length === 0 && canvasItems.length > 0) {
+      setHistory([canvasItems]);
+      setHistoryIndex(0);
+    }
+  }, [canvasItems, history]);
+
+  // Record a new state to history
+  const recordHistoryState = useCallback((newItems: CanvasItem[]) => {
+    setHistory((prevHistory) => {
+      const truncated = prevHistory.slice(0, historyIndex + 1);
+      const currentTop = truncated[truncated.length - 1];
+      if (currentTop && JSON.stringify(currentTop) === JSON.stringify(newItems)) {
+        return prevHistory;
+      }
+      const updated = [...truncated, newItems];
+      if (updated.length > 60) {
+        return updated.slice(updated.length - 60);
+      }
+      return updated;
+    });
+    setHistoryIndex((prevIndex) => Math.min(prevIndex + 1, 59));
+  }, [historyIndex]);
+
+  // Apply state change and record to history
+  const applyCanvasItemsWithHistory = useCallback((
+    updater: CanvasItem[] | ((prev: CanvasItem[]) => CanvasItem[])
+  ) => {
+    setCanvasItems((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      recordHistoryState(next);
+      return next;
+    });
+  }, [recordHistoryState, setCanvasItems]);
+
+  // Undo Handler
+  const handleUndo = useCallback(() => {
+    if (historyIndex > 0) {
+      const nextIdx = historyIndex - 1;
+      const targetState = history[nextIdx];
+      if (targetState) {
+        setCanvasItems(targetState);
+        setHistoryIndex(nextIdx);
+        const existingIds = new Set(targetState.map((i) => i.id));
+        setSelectedItemIds((prev) => prev.filter((id) => existingIds.has(id)));
+      }
+    }
+  }, [history, historyIndex, setCanvasItems]);
+
+  // Redo Handler
+  const handleRedo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      const nextIdx = historyIndex + 1;
+      const targetState = history[nextIdx];
+      if (targetState) {
+        setCanvasItems(targetState);
+        setHistoryIndex(nextIdx);
+        const existingIds = new Set(targetState.map((i) => i.id));
+        setSelectedItemIds((prev) => prev.filter((id) => existingIds.has(id)));
+      }
+    }
+  }, [history, historyIndex, setCanvasItems]);
+
+  // Keyboard Arrow Key Nudging, Shortcuts & Undo/Redo Listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if typing inside text inputs, textareas, or selects
       const activeTag = document.activeElement?.tagName?.toLowerCase();
       if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') {
+        return;
+      }
+
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+      // Undo: Ctrl+Z or Cmd+Z (without Shift)
+      if (isCtrlOrCmd && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+
+      // Redo: Ctrl+Shift+Z or Cmd+Shift+Z or Ctrl+Y or Cmd+Y
+      if (
+        (isCtrlOrCmd && e.key.toLowerCase() === 'z' && e.shiftKey) ||
+        (isCtrlOrCmd && e.key.toLowerCase() === 'y')
+      ) {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+
+      // Select All: Ctrl+A or Cmd+A
+      if (isCtrlOrCmd && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        setSelectedItemIds(canvasItemsRef.current.map((i) => i.id));
         return;
       }
 
@@ -186,7 +289,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       switch (e.key) {
         case 'ArrowUp':
           e.preventDefault();
-          setCanvasItems((prev) =>
+          applyCanvasItemsWithHistory((prev) =>
             prev.map((it) =>
               selectedItemIds.includes(it.id)
                 ? { ...it, y: Math.max(0, parseFloat((it.y - nudgeAmount).toFixed(2))) }
@@ -197,7 +300,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
         case 'ArrowDown':
           e.preventDefault();
-          setCanvasItems((prev) =>
+          applyCanvasItemsWithHistory((prev) =>
             prev.map((it) =>
               selectedItemIds.includes(it.id)
                 ? { ...it, y: parseFloat((it.y + nudgeAmount).toFixed(2)) }
@@ -208,7 +311,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
         case 'ArrowLeft':
           e.preventDefault();
-          setCanvasItems((prev) =>
+          applyCanvasItemsWithHistory((prev) =>
             prev.map((it) =>
               selectedItemIds.includes(it.id)
                 ? { ...it, x: Math.max(-PASTEBOARD_MARGIN_X, parseFloat((it.x - nudgeAmount).toFixed(2))) }
@@ -219,7 +322,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
         case 'ArrowRight':
           e.preventDefault();
-          setCanvasItems((prev) =>
+          applyCanvasItemsWithHistory((prev) =>
             prev.map((it) =>
               selectedItemIds.includes(it.id)
                 ? { ...it, x: parseFloat((it.x + nudgeAmount).toFixed(2)) }
@@ -231,7 +334,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         case 'Delete':
         case 'Backspace':
           e.preventDefault();
-          setCanvasItems((prev) => prev.filter((it) => !selectedItemIds.includes(it.id)));
+          applyCanvasItemsWithHistory((prev) => prev.filter((it) => !selectedItemIds.includes(it.id)));
           setSelectedItemIds([]);
           break;
 
@@ -244,7 +347,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedItemIds]);
+  }, [selectedItemIds, handleUndo, handleRedo, applyCanvasItemsWithHistory]);
 
   const PASTEBOARD_MARGIN_X = 10; // 10 inches left and right pasteboard workspace
   const PASTEBOARD_MARGIN_Y = 3;  // 3 inches top and bottom pasteboard workspace
@@ -661,6 +764,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     // 1. Check if user clicked on a resize handle or edge path of an active selection
     const hitHandle = getHitResizeHandle(clickX, clickY);
     if (hitHandle) {
+      dragStartSnapshotRef.current = canvasItemsRef.current;
       setIsResizing(true);
       setActiveResizeHandle(hitHandle.handle);
       if (hitHandle.item) {
@@ -729,6 +833,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         }
       }
 
+      dragStartSnapshotRef.current = canvasItemsRef.current;
       setSelectedItemIds(newSelectedIds);
       setIsDragging(true);
       setDragStartPos({ x: clickX, y: clickY });
@@ -969,12 +1074,22 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   };
 
   const handleMouseUp = () => {
+    if (isDragging || isResizing) {
+      if (dragStartSnapshotRef.current) {
+        const startJson = JSON.stringify(dragStartSnapshotRef.current);
+        const endJson = JSON.stringify(canvasItemsRef.current);
+        if (startJson !== endJson) {
+          recordHistoryState(canvasItemsRef.current);
+        }
+      }
+    }
     setIsDragging(false);
     setIsResizing(false);
     setActiveResizeHandle(null);
     setInitialResizeState(null);
     setSelectionBox(null);
     setDragStartPos(null);
+    dragStartSnapshotRef.current = null;
   };
 
   // Split Multi-Digit Numbers into Independent Movable Single Digits
@@ -1047,7 +1162,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     });
 
     if (didSplitAny) {
-      setCanvasItems(newItemsList);
+      applyCanvasItemsWithHistory(newItemsList);
       setSelectedItemIds(newSelectedIds);
       setModificationLogs((prev) => [...createdLogs, ...prev]);
     }
@@ -1085,7 +1200,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     };
 
     const remainingItems = canvasItems.filter((i) => !selectedItemIds.includes(i.id));
-    setCanvasItems([...remainingItems, mergedItem]);
+    applyCanvasItemsWithHistory([...remainingItems, mergedItem]);
     setSelectedItemIds([mergedItem.id]);
 
     // Update modification logs
@@ -1126,7 +1241,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     };
 
     const remainingItems = canvasItems.filter((i) => !digitIds.includes(i.id));
-    setCanvasItems([...remainingItems, mergedItem]);
+    applyCanvasItemsWithHistory([...remainingItems, mergedItem]);
     setSelectedItemIds([mergedItem.id]);
     setModificationLogs((prev) => prev.filter((l) => l.id !== logEntry.id));
   };
@@ -1146,7 +1261,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   const handleRePack = () => {
     if (orders.length === 0) return;
     const result = generateAutoNestingLayout(orders, layoutSettings);
-    setCanvasItems(result.items);
+    applyCanvasItemsWithHistory(result.items);
     setMetrics(result.metrics);
     setModificationLogs(result.modificationLogs || []);
   };
@@ -1154,7 +1269,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   // Single or Batch Rotation Handler
   const handleRotateSelectedBy = (angleDelta: number) => {
     if (selectedItemIds.length === 0) return;
-    setCanvasItems((prev) =>
+    applyCanvasItemsWithHistory((prev) =>
       prev.map((it) => {
         if (selectedItemIds.includes(it.id)) {
           const newRot = ( (it.rotation || 0) + angleDelta + 360 ) % 360;
@@ -1167,7 +1282,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
   const handleSetSelectedRotation = (exactAngle: number) => {
     if (selectedItemIds.length === 0) return;
-    setCanvasItems((prev) =>
+    applyCanvasItemsWithHistory((prev) =>
       prev.map((it) => {
         if (selectedItemIds.includes(it.id)) {
           return { ...it, rotation: exactAngle };
@@ -1179,7 +1294,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
   const handleDeleteSelected = () => {
     if (selectedItemIds.length === 0) return;
-    setCanvasItems((prev) => prev.filter((it) => !selectedItemIds.includes(it.id)));
+    applyCanvasItemsWithHistory((prev) => prev.filter((it) => !selectedItemIds.includes(it.id)));
     setSelectedItemIds([]);
   };
 
@@ -1197,7 +1312,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       }
     });
 
-    setCanvasItems((prev) => [...prev, ...duplicates]);
+    applyCanvasItemsWithHistory((prev) => [...prev, ...duplicates]);
     setSelectedItemIds(duplicates.map((d) => d.id));
   };
 
@@ -1208,13 +1323,13 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
     if (type === 'left') {
       const minX = Math.min(...selected.map((i) => i.x));
-      setCanvasItems((prev) =>
+      applyCanvasItemsWithHistory((prev) =>
         prev.map((i) => (selectedItemIds.includes(i.id) ? { ...i, x: minX } : i))
       );
     } else if (type === 'center') {
       const avgCx =
         selected.reduce((acc, i) => acc + (i.x + i.width / 2), 0) / selected.length;
-      setCanvasItems((prev) =>
+      applyCanvasItemsWithHistory((prev) =>
         prev.map((i) =>
           selectedItemIds.includes(i.id)
             ? { ...i, x: parseFloat((avgCx - i.width / 2).toFixed(2)) }
@@ -1223,7 +1338,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       );
     } else if (type === 'right') {
       const maxX = Math.max(...selected.map((i) => i.x + i.width));
-      setCanvasItems((prev) =>
+      applyCanvasItemsWithHistory((prev) =>
         prev.map((i) =>
           selectedItemIds.includes(i.id)
             ? { ...i, x: parseFloat((maxX - i.width).toFixed(2)) }
@@ -1232,13 +1347,13 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       );
     } else if (type === 'top') {
       const minY = Math.min(...selected.map((i) => i.y));
-      setCanvasItems((prev) =>
+      applyCanvasItemsWithHistory((prev) =>
         prev.map((i) => (selectedItemIds.includes(i.id) ? { ...i, y: minY } : i))
       );
     } else if (type === 'middle') {
       const avgCy =
         selected.reduce((acc, i) => acc + (i.y + i.height / 2), 0) / selected.length;
-      setCanvasItems((prev) =>
+      applyCanvasItemsWithHistory((prev) =>
         prev.map((i) =>
           selectedItemIds.includes(i.id)
             ? { ...i, y: parseFloat((avgCy - i.height / 2).toFixed(2)) }
@@ -1247,7 +1362,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       );
     } else if (type === 'bottom') {
       const maxY = Math.max(...selected.map((i) => i.y + i.height));
-      setCanvasItems((prev) =>
+      applyCanvasItemsWithHistory((prev) =>
         prev.map((i) =>
           selectedItemIds.includes(i.id)
             ? { ...i, y: parseFloat((maxY - i.height).toFixed(2)) }
@@ -1273,7 +1388,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         posMap.set(item.id, parseFloat((first.x + idx * step).toFixed(2)));
       });
 
-      setCanvasItems((prev) =>
+      applyCanvasItemsWithHistory((prev) =>
         prev.map((i) => (posMap.has(i.id) ? { ...i, x: posMap.get(i.id)! } : i))
       );
     } else {
@@ -1287,7 +1402,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         posMap.set(item.id, parseFloat((first.y + idx * step).toFixed(2)));
       });
 
-      setCanvasItems((prev) =>
+      applyCanvasItemsWithHistory((prev) =>
         prev.map((i) => (posMap.has(i.id) ? { ...i, y: posMap.get(i.id)! } : i))
       );
     }
@@ -1296,7 +1411,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   // Group Nudge & Scale Tools
   const handleGroupNudge = (dx: number, dy: number) => {
     if (selectedItemIds.length === 0) return;
-    setCanvasItems((prev) =>
+    applyCanvasItemsWithHistory((prev) =>
       prev.map((it) => {
         if (selectedItemIds.includes(it.id)) {
           return {
@@ -1316,7 +1431,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     const gBox = getGroupBoundingBox(selected);
     if (!gBox) return;
 
-    setCanvasItems((prev) =>
+    applyCanvasItemsWithHistory((prev) =>
       prev.map((it) => {
         if (selectedItemIds.includes(it.id)) {
           const relX = it.x - gBox.x;
@@ -1340,7 +1455,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     const gBox = getGroupBoundingBox(selected);
     if (!gBox) return;
 
-    setCanvasItems((prev) =>
+    applyCanvasItemsWithHistory((prev) =>
       prev.map((it) => {
         if (selectedItemIds.includes(it.id)) {
           const relY = it.y - gBox.y;
@@ -1364,7 +1479,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     const gBox = getGroupBoundingBox(selected);
     if (!gBox) return;
 
-    setCanvasItems((prev) =>
+    applyCanvasItemsWithHistory((prev) =>
       prev.map((it) => {
         if (selectedItemIds.includes(it.id)) {
           const relX = it.x - gBox.cx;
@@ -1390,7 +1505,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
   const handleBatchSetWidth = (newW: number) => {
     if (selectedItemIds.length === 0 || isNaN(newW) || newW <= 0) return;
-    setCanvasItems((prev) =>
+    applyCanvasItemsWithHistory((prev) =>
       prev.map((it) =>
         selectedItemIds.includes(it.id) ? { ...it, width: parseFloat(newW.toFixed(2)) } : it
       )
@@ -1399,7 +1514,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
   const handleBatchSetHeight = (newH: number) => {
     if (selectedItemIds.length === 0 || isNaN(newH) || newH <= 0) return;
-    setCanvasItems((prev) =>
+    applyCanvasItemsWithHistory((prev) =>
       prev.map((it) =>
         selectedItemIds.includes(it.id) ? { ...it, height: parseFloat(newH.toFixed(2)) } : it
       )
@@ -1531,8 +1646,47 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
           </button>
         </div>
 
-        {/* Auto Nesting Strategy Buttons */}
-        <div className="flex items-center space-x-2">
+        {/* Auto Nesting Strategy & History Undo/Redo Controls */}
+        <div className="flex items-center space-x-3">
+          {/* Undo & Redo Adobe-style Buttons */}
+          <div className="flex items-center space-x-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800 shadow-inner">
+            <button
+              onClick={handleUndo}
+              disabled={historyIndex <= 0}
+              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-xs font-mono font-bold transition-all ${
+                historyIndex > 0
+                  ? 'text-zinc-200 hover:text-white hover:bg-zinc-800 active:scale-95 cursor-pointer'
+                  : 'text-zinc-600 opacity-40 cursor-not-allowed'
+              }`}
+              title="Undo (Ctrl+Z / Cmd+Z)"
+            >
+              <Undo2 className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Undo</span>
+              <kbd className="hidden sm:inline-block text-[9px] px-1 py-0.2 bg-zinc-900 border border-zinc-800 rounded text-zinc-400">
+                Ctrl+Z
+              </kbd>
+            </button>
+
+            <div className="w-[1px] h-4 bg-zinc-800" />
+
+            <button
+              onClick={handleRedo}
+              disabled={historyIndex >= history.length - 1}
+              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-xs font-mono font-bold transition-all ${
+                historyIndex < history.length - 1
+                  ? 'text-zinc-200 hover:text-white hover:bg-zinc-800 active:scale-95 cursor-pointer'
+                  : 'text-zinc-600 opacity-40 cursor-not-allowed'
+              }`}
+              title="Redo (Ctrl+Shift+Z / Ctrl+Y / Cmd+Shift+Z)"
+            >
+              <Redo2 className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Redo</span>
+              <kbd className="hidden sm:inline-block text-[9px] px-1 py-0.2 bg-zinc-900 border border-zinc-800 rounded text-zinc-400">
+                Ctrl+⇧+Z
+              </kbd>
+            </button>
+          </div>
+
           <button
             onClick={handleRePack}
             className="flex items-center space-x-2 px-4 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold uppercase tracking-wider rounded shadow-lg shadow-red-900/20 transition-all"
@@ -1607,8 +1761,16 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
             />
           </div>
 
-          <div className="text-xs text-zinc-400 mt-3 font-mono space-y-1 bg-zinc-900/60 p-3 rounded-lg border border-zinc-800/80">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+          <div className="text-xs text-zinc-400 mt-3 font-mono space-y-1.5 bg-zinc-900/60 p-3 rounded-lg border border-zinc-800/80">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px]">
+              <span className="flex items-center space-x-1.5 text-zinc-300">
+                <kbd className="px-1.5 py-0.5 bg-zinc-950 border border-zinc-700 rounded text-cyan-400 font-bold">Ctrl + Z</kbd>
+                <span>Undo</span>
+              </span>
+              <span className="flex items-center space-x-1.5 text-zinc-300">
+                <kbd className="px-1.5 py-0.5 bg-zinc-950 border border-zinc-700 rounded text-cyan-400 font-bold">Ctrl + ⇧ + Z</kbd>
+                <span>Redo</span>
+              </span>
               <span className="flex items-center space-x-1.5 text-zinc-300">
                 <kbd className="px-1.5 py-0.5 bg-zinc-950 border border-zinc-700 rounded text-amber-400 font-bold">Shift + Drag</kbd>
                 <span>Lock straight horizontal/vertical axis</span>
@@ -1802,7 +1964,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                       value={singleSelectedItem.x}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value) || 0;
-                        setCanvasItems((prev) =>
+                        applyCanvasItemsWithHistory((prev) =>
                           prev.map((i) => (i.id === singleSelectedItem.id ? { ...i, x: val } : i))
                         );
                       }}
@@ -1818,7 +1980,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                       value={singleSelectedItem.y}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value) || 0;
-                        setCanvasItems((prev) =>
+                        applyCanvasItemsWithHistory((prev) =>
                           prev.map((i) => (i.id === singleSelectedItem.id ? { ...i, y: val } : i))
                         );
                       }}
@@ -1836,7 +1998,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                       value={singleSelectedItem.width}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value) || 1;
-                        setCanvasItems((prev) =>
+                        applyCanvasItemsWithHistory((prev) =>
                           prev.map((i) => (i.id === singleSelectedItem.id ? { ...i, width: val } : i))
                         );
                       }}
@@ -1854,7 +2016,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                       value={singleSelectedItem.height}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value) || 1;
-                        setCanvasItems((prev) =>
+                        applyCanvasItemsWithHistory((prev) =>
                           prev.map((i) => (i.id === singleSelectedItem.id ? { ...i, height: val } : i))
                         );
                       }}
