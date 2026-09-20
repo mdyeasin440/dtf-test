@@ -30,6 +30,7 @@ import {
   Undo2,
   Redo2,
   History,
+  Shirt,
 } from 'lucide-react';
 import { CanvasItem, DigitNestingMode, DigitSplitLogEntry, LayoutSettings, RollMetrics } from '../types';
 import { renderItemToCanvas, addImageLoadListener } from '../utils/canvasRenderer';
@@ -1316,6 +1317,36 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     setSelectedItemIds(duplicates.map((d) => d.id));
   };
 
+  const handleGenerateChestNumberForSelected = (targetItem?: CanvasItem) => {
+    const item = targetItem || singleSelectedItem;
+    if (!item || item.itemType !== 'number') return;
+    const chestH = item.preset?.smallChestNumberHeightInches || 3.0;
+    const tight = calculateTightTextDimensions(item.number, 'number', item.preset, chestH);
+
+    const chestItem: CanvasItem = {
+      id: `${item.orderId || 'ord'}-chest-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      orderId: item.orderId,
+      itemType: 'number',
+      customerName: item.customerName ? `${item.customerName} (Front #${item.number})` : `Front #${item.number}`,
+      number: item.number,
+      designCode: item.designCode,
+      preset: item.preset,
+      x: Math.min(rollWidthInches - tight.widthInches - 0.25, parseFloat((item.x + item.width + 0.35).toFixed(2))),
+      y: item.y,
+      width: tight.widthInches,
+      height: tight.heightInches,
+      rotation: 0,
+      zIndex: Math.max(...canvasItems.map((c) => c.zIndex || 0), 0) + 1,
+      locked: false,
+      garmentSize: item.garmentSize,
+      isChestNumber: true,
+      parentNumber: item.number,
+    };
+
+    applyCanvasItemsWithHistory((prev) => [...prev, chestItem]);
+    setSelectedItemIds([chestItem.id]);
+  };
+
   // Adobe Alignment Tools
   const handleAlignSelected = (type: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => {
     if (selectedItemIds.length < 2) return;
@@ -1872,12 +1903,23 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
               /* Single Selection Controls */
               <div className="space-y-4">
                 <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800">
-                  <div className="text-[10px] text-zinc-500 uppercase font-mono mb-1">Text Content:</div>
+                  <div className="flex items-center justify-between text-[10px] text-zinc-500 uppercase font-mono mb-1">
+                    <span>Text Content:</span>
+                    {singleSelectedItem.isChestNumber && (
+                      <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded flex items-center space-x-1">
+                        <Shirt className="w-2.5 h-2.5" />
+                        <span>CHEST NUMBER (FRONT)</span>
+                      </span>
+                    )}
+                  </div>
                   <div className="text-lg font-black text-white tracking-wide uppercase">
                     {singleSelectedItem.itemType === 'name' ? singleSelectedItem.customerName : singleSelectedItem.number}
                   </div>
-                  <div className="text-xs text-red-400 font-mono mt-1">
-                    Design Code: {singleSelectedItem.designCode}
+                  <div className="text-xs text-red-400 font-mono mt-1 flex items-center justify-between">
+                    <span>Design Code: {singleSelectedItem.designCode}</span>
+                    {singleSelectedItem.isChestNumber && (
+                      <span className="text-emerald-400 font-bold">Front Chest</span>
+                    )}
                   </div>
                 </div>
 
@@ -1953,6 +1995,18 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                     <span className="text-[10px] uppercase font-mono">Delete</span>
                   </button>
                 </div>
+
+                {/* Generate Small Chest Number Button for Back Numbers */}
+                {singleSelectedItem.itemType === 'number' && !singleSelectedItem.isChestNumber && (
+                  <button
+                    type="button"
+                    onClick={() => handleGenerateChestNumberForSelected()}
+                    className="w-full py-2 px-3 bg-gradient-to-r from-emerald-950/60 to-zinc-900 border border-emerald-500/50 hover:border-emerald-400 text-emerald-300 hover:text-white rounded text-xs font-bold font-mono uppercase flex items-center justify-center space-x-2 transition-all shadow-sm"
+                  >
+                    <Shirt className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Create Front Chest Number ({(singleSelectedItem.preset?.smallChestNumberHeightInches || 3.0).toFixed(1)}″)</span>
+                  </button>
+                )}
 
                 {/* Manual Position Controls */}
                 <div className="grid grid-cols-2 gap-3 bg-zinc-950 p-3 rounded-lg border border-zinc-800 font-mono text-xs">

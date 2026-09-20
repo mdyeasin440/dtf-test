@@ -38,6 +38,8 @@ export interface DesignPreset {
   defaultNameWidthInches: number; // e.g. 12"
   defaultNameHeightInches: number; // e.g. 2.2"
   defaultNumberHeightInches: number; // e.g. 9.5"
+  hasSmallChestNumber?: boolean; // Toggle for small / chest number (default: false / OFF)
+  smallChestNumberHeightInches?: number; // Exact height / size in inches for chest number (e.g. 3.0" or 3.5")
   notes?: string;
   updatedAt?: string;
   isCustom?: boolean;
@@ -58,6 +60,8 @@ export interface OrderItem {
   nameHeightInches: number;
   numberHeightInches: number;
   numberWidthInches: number; // Calculated or user defined
+  hasSmallChestNumber?: boolean; // Toggle small chest number generation for this jersey
+  smallChestNumberHeightInches?: number; // Custom chest number height in inches
   status: 'matched' | 'unmatched_code' | 'error';
   errorMessage?: string;
 }
@@ -83,6 +87,10 @@ export interface CanvasItem {
   customStrokeOverride?: string;
   garmentSize: GarmentSize;
   hasCollision?: boolean;
+  isChestNumber?: boolean; // Indicates if this item is a secondary small chest number
+  parentNumber?: string;
+  isSplitDigit?: boolean;
+  digitIndex?: number;
 }
 
 export type NestingStrategy = 'compact' | 'grouped_by_order' | 'rotated_max_density';

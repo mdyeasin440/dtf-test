@@ -27,6 +27,7 @@ import {
   Files,
   CheckCheck,
   Upload,
+  Shirt,
 } from 'lucide-react';
 import { DesignPreset } from '../types';
 import { registerCustomFont } from '../utils/fontLoader';
@@ -173,6 +174,8 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
       defaultNameWidthInches: 12.0,
       defaultNameHeightInches: 2.2,
       defaultNumberHeightInches: 9.5,
+      hasSmallChestNumber: false, // Small chest number toggle OFF by default
+      smallChestNumberHeightInches: 3.0, // Default chest number height in inches
       notes: 'New custom design specification preset.',
     };
     setEditingPreset(newPreset);
@@ -764,6 +767,12 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       ⚡ Arc {preset.arcCurvature || preset.arcAmount || 24}°
                     </span>
                   )}
+                  {preset.hasSmallChestNumber && (
+                    <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded flex items-center space-x-1">
+                      <Shirt className="w-2.5 h-2.5" />
+                      <span>Front #{preset.smallChestNumberHeightInches || 3.0}"</span>
+                    </span>
+                  )}
                 </div>
                 <span className="text-[10px] font-mono uppercase text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">
                   {preset.league}
@@ -819,28 +828,65 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                   </div>
                 )}
 
-                {preset.numberAssets && (preset.numberAssets['7'] || Object.values(preset.numberAssets)[0]) ? (
-                  <div className="h-12 flex items-center justify-center my-1">
-                    <img
-                      src={preset.numberAssets['7'] || Object.values(preset.numberAssets)[0]}
-                      alt="Digit Graphic"
-                      className="max-h-12 object-contain filter drop-shadow"
-                    />
+                <div className="flex items-center justify-center space-x-4 my-1">
+                  {/* Main Large Back Number */}
+                  <div className="flex flex-col items-center">
+                    {preset.numberAssets && (preset.numberAssets['7'] || Object.values(preset.numberAssets)[0]) ? (
+                      <div className="h-12 flex items-center justify-center">
+                        <img
+                          src={preset.numberAssets['7'] || Object.values(preset.numberAssets)[0]}
+                          alt="Digit Graphic"
+                          className="max-h-12 object-contain filter drop-shadow"
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        className="text-center font-black"
+                        style={{
+                          fontFamily: preset.numberStyle?.fontFamily || preset.fontFamily,
+                          color: preset.numberStyle?.fillColor || preset.textColor,
+                          WebkitTextStroke: `${(preset.numberStyle?.strokeWidth || 4) / 2}px ${preset.numberStyle?.strokeColor || preset.strokeColor}`,
+                          fontSize: '44px',
+                          lineHeight: '1',
+                        }}
+                      >
+                        7
+                      </div>
+                    )}
+                    {preset.hasSmallChestNumber && (
+                      <span className="text-[8px] font-mono text-zinc-500 uppercase mt-0.5">Back ({(preset.defaultNumberHeightInches || 9.5).toFixed(1)}″)</span>
+                    )}
                   </div>
-                ) : (
-                  <div
-                    className="text-center font-black"
-                    style={{
-                      fontFamily: preset.numberStyle?.fontFamily || preset.fontFamily,
-                      color: preset.numberStyle?.fillColor || preset.textColor,
-                      WebkitTextStroke: `${(preset.numberStyle?.strokeWidth || 4) / 2}px ${preset.numberStyle?.strokeColor || preset.strokeColor}`,
-                      fontSize: '44px',
-                      lineHeight: '1',
-                    }}
-                  >
-                    7
-                  </div>
-                )}
+
+                  {/* Secondary Small Chest Number (World Cup style front) */}
+                  {preset.hasSmallChestNumber && (
+                    <div className="flex flex-col items-center pl-3 border-l border-zinc-800">
+                      {preset.numberAssets && (preset.numberAssets['7'] || Object.values(preset.numberAssets)[0]) ? (
+                        <div className="h-6 flex items-center justify-center">
+                          <img
+                            src={preset.numberAssets['7'] || Object.values(preset.numberAssets)[0]}
+                            alt="Chest Digit"
+                            className="max-h-6 object-contain filter drop-shadow"
+                          />
+                        </div>
+                      ) : (
+                        <div
+                          className="text-center font-black"
+                          style={{
+                            fontFamily: preset.numberStyle?.fontFamily || preset.fontFamily,
+                            color: preset.numberStyle?.fillColor || preset.textColor,
+                            WebkitTextStroke: `${Math.max(1, (preset.numberStyle?.strokeWidth || 4) / 4)}px ${preset.numberStyle?.strokeColor || preset.strokeColor}`,
+                            fontSize: '20px',
+                            lineHeight: '1',
+                          }}
+                        >
+                          7
+                        </div>
+                      )}
+                      <span className="text-[8px] font-mono text-emerald-400 font-bold uppercase mt-0.5">Chest ({(preset.smallChestNumberHeightInches || 3.0).toFixed(1)}″)</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Specs Summary */}
@@ -1184,6 +1230,208 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                             </textPath>
                           </text>
                         </svg>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Small / Chest Numbers (Front of Jersey) Customization */}
+              <div
+                className={`p-4 rounded-xl border transition-all duration-300 space-y-4 ${
+                  editingPreset.hasSmallChestNumber
+                    ? 'bg-gradient-to-r from-emerald-950/30 via-zinc-900 to-zinc-900 border-emerald-500/50 shadow-lg shadow-emerald-950/20'
+                    : 'bg-zinc-900/60 border-zinc-800 hover:border-zinc-700'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div
+                      className={`p-2 rounded-lg border transition-colors ${
+                        editingPreset.hasSmallChestNumber
+                          ? 'bg-emerald-600/20 border-emerald-500/40 text-emerald-400'
+                          : 'bg-zinc-800 border-zinc-700 text-zinc-400'
+                      }`}
+                    >
+                      <Shirt className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-white">
+                          Small / Chest Numbers (Front of Jersey)
+                        </h4>
+                        <span
+                          className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border transition-colors ${
+                            editingPreset.hasSmallChestNumber
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                              : 'bg-zinc-800 text-zinc-500 border-zinc-700'
+                          }`}
+                        >
+                          {editingPreset.hasSmallChestNumber ? '⚡ CHEST NUMBER ON' : 'OFF (BACK NUMBER ONLY)'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-zinc-400 font-mono mt-0.5">
+                        Automatically copies the main jersey number and creates a secondary, smaller chest/front number (similar to World Cup jerseys, while large number stays on back).
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Toggle Switch */}
+                  <label className="relative inline-flex items-center cursor-pointer select-none shrink-0 ml-4">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(editingPreset.hasSmallChestNumber)}
+                      onChange={(e) => {
+                        const isChecked = e.target.checked;
+                        setEditingPreset({
+                          ...editingPreset,
+                          hasSmallChestNumber: isChecked,
+                          smallChestNumberHeightInches: isChecked
+                            ? (editingPreset.smallChestNumberHeightInches || 3.0)
+                            : editingPreset.smallChestNumberHeightInches,
+                        });
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-12 h-6 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                    <span className="ml-2 text-xs font-mono font-bold text-zinc-300 min-w-[32px]">
+                      {editingPreset.hasSmallChestNumber ? 'ON' : 'OFF'}
+                    </span>
+                  </label>
+                </div>
+
+                {/* Secondary input and controls revealed when Toggle is ON */}
+                {editingPreset.hasSmallChestNumber && (
+                  <div className="pt-3 border-t border-zinc-800/80 space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Height in Inches Input & Quick Presets */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="block text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                            Front Chest Number Height (Inches)
+                          </label>
+                          <span className="text-[11px] font-mono font-bold text-white bg-emerald-950/60 border border-emerald-500/40 px-2 py-0.5 rounded">
+                            {(editingPreset.smallChestNumberHeightInches || 3.0).toFixed(1)}″
+                          </span>
+                        </div>
+
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="1.0"
+                            max="6.0"
+                            value={editingPreset.smallChestNumberHeightInches ?? 3.0}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value) || 3.0;
+                              setEditingPreset({
+                                ...editingPreset,
+                                smallChestNumberHeightInches: val,
+                              });
+                            }}
+                            className="w-full bg-zinc-950 text-white px-3 py-2 rounded border border-emerald-500/40 focus:border-emerald-400 text-xs font-mono font-bold"
+                            placeholder="3.0"
+                          />
+                          <span className="text-xs font-mono text-zinc-400">Inches</span>
+                        </div>
+
+                        {/* Quick Size Preset Buttons */}
+                        <div className="flex items-center justify-between gap-1 pt-1">
+                          {[
+                            { label: '2.5″', size: 2.5 },
+                            { label: '3.0″ (Standard)', size: 3.0 },
+                            { label: '3.5″ (World Cup)', size: 3.5 },
+                            { label: '4.0″', size: 4.0 },
+                          ].map((item) => {
+                            const currentVal = editingPreset.smallChestNumberHeightInches ?? 3.0;
+                            const isSelected = Math.abs(currentVal - item.size) < 0.05;
+                            return (
+                              <button
+                                key={item.size}
+                                type="button"
+                                onClick={() =>
+                                  setEditingPreset({
+                                    ...editingPreset,
+                                    smallChestNumberHeightInches: item.size,
+                                  })
+                                }
+                                className={`flex-1 py-1 px-1.5 text-[10px] font-mono font-bold uppercase rounded border transition-all ${
+                                  isSelected
+                                    ? 'bg-emerald-600 text-white border-emerald-400 shadow'
+                                    : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-zinc-200 hover:border-zinc-700'
+                                }`}
+                              >
+                                {item.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Live Scale Visual Comparison */}
+                      <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800 flex flex-col items-center justify-center relative overflow-hidden min-h-[100px]">
+                        <div className="absolute top-1 left-2 text-[9px] font-mono text-zinc-500 uppercase">
+                          Scale Comparison (Back vs Chest)
+                        </div>
+
+                        <div className="flex items-end justify-center space-x-6 pt-3">
+                          {/* Back Number Preview */}
+                          <div className="flex flex-col items-center">
+                            {editingPreset.numberAssets && (editingPreset.numberAssets['7'] || Object.values(editingPreset.numberAssets)[0]) ? (
+                              <img
+                                src={editingPreset.numberAssets['7'] || Object.values(editingPreset.numberAssets)[0]}
+                                alt="Back Digit"
+                                className="h-14 object-contain filter drop-shadow"
+                              />
+                            ) : (
+                              <div
+                                className="font-black text-center"
+                                style={{
+                                  fontFamily: editingPreset.numberStyle?.fontFamily || editingPreset.fontFamily,
+                                  color: editingPreset.numberStyle?.fillColor || editingPreset.textColor,
+                                  WebkitTextStroke: `${(editingPreset.numberStyle?.strokeWidth || 4) / 3}px ${editingPreset.numberStyle?.strokeColor || editingPreset.strokeColor}`,
+                                  fontSize: '44px',
+                                  lineHeight: '1',
+                                }}
+                              >
+                                7
+                              </div>
+                            )}
+                            <div className="text-[9px] font-mono text-zinc-400 mt-1">
+                              Back: <span className="text-white font-bold">{(editingPreset.defaultNumberHeightInches || 9.5).toFixed(1)}″</span>
+                            </div>
+                          </div>
+
+                          {/* Front Chest Number Preview */}
+                          <div className="flex flex-col items-center pl-4 border-l border-zinc-800">
+                            {editingPreset.numberAssets && (editingPreset.numberAssets['7'] || Object.values(editingPreset.numberAssets)[0]) ? (
+                              <img
+                                src={editingPreset.numberAssets['7'] || Object.values(editingPreset.numberAssets)[0]}
+                                alt="Chest Digit"
+                                style={{
+                                  height: `${Math.max(16, 56 * ((editingPreset.smallChestNumberHeightInches || 3.0) / (editingPreset.defaultNumberHeightInches || 9.5)))}px`,
+                                }}
+                                className="object-contain filter drop-shadow"
+                              />
+                            ) : (
+                              <div
+                                className="font-black text-center"
+                                style={{
+                                  fontFamily: editingPreset.numberStyle?.fontFamily || editingPreset.fontFamily,
+                                  color: editingPreset.numberStyle?.fillColor || editingPreset.textColor,
+                                  WebkitTextStroke: `${Math.max(1, (editingPreset.numberStyle?.strokeWidth || 4) / 6)}px ${editingPreset.numberStyle?.strokeColor || editingPreset.strokeColor}`,
+                                  fontSize: `${Math.max(14, 44 * ((editingPreset.smallChestNumberHeightInches || 3.0) / (editingPreset.defaultNumberHeightInches || 9.5)))}px`,
+                                  lineHeight: '1',
+                                }}
+                              >
+                                7
+                              </div>
+                            )}
+                            <div className="text-[9px] font-mono text-emerald-400 mt-1 font-bold">
+                              Chest: <span>{(editingPreset.smallChestNumberHeightInches || 3.0).toFixed(1)}″</span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>

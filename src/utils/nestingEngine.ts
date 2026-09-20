@@ -59,6 +59,9 @@ export function parseBulkInput(
     const numHeight = presetNumHeight * scale;
     const tightNum = calculateTightTextDimensions(number, 'number', defaultPreset, numHeight);
 
+    const hasSmallChestNumber = Boolean(matched?.hasSmallChestNumber);
+    const smallChestNumberHeightInches = matched?.smallChestNumberHeightInches || 3.0;
+
     for (let q = 0; q < qty; q++) {
       items.push({
         id: `order-${index}-${q}-${Date.now()}`,
@@ -73,6 +76,8 @@ export function parseBulkInput(
         nameHeightInches: tightName.heightInches,
         numberHeightInches: tightNum.heightInches,
         numberWidthInches: tightNum.widthInches,
+        hasSmallChestNumber,
+        smallChestNumberHeightInches,
         status: matched ? 'matched' : 'unmatched_code',
         errorMessage: matched ? undefined : `Design code "${rawDesignCode}" not found in database.`,
       });
@@ -121,6 +126,7 @@ export function generateAutoNestingLayout(
     isSplitDigit?: boolean;
     parentNumber?: string;
     isCurvedText?: boolean;
+    isChestNumber?: boolean;
   }
 
   const isCurvedPreset = (preset: any): boolean => {
@@ -131,6 +137,7 @@ export function generateAutoNestingLayout(
   const straightNameBlocks: UnpackedBlock[] = [];
   const curvedTextBlocks: UnpackedBlock[] = [];
   const numberBlocks: UnpackedBlock[] = [];
+  const smallChestNumberBlocks: UnpackedBlock[] = [];
 
   orders.forEach((ord) => {
     if (!ord.matchedPreset) return;
@@ -231,6 +238,32 @@ export function generateAutoNestingLayout(
           garmentSize: ord.garmentSize,
         });
       }
+
+      // Dynamic Small / Chest Number Generation (World Cup Style Front Number)
+      const enableChestNumber = Boolean(
+        ord.hasSmallChestNumber ?? ord.matchedPreset?.hasSmallChestNumber
+      );
+
+      if (enableChestNumber) {
+        const presetChestHeight = ord.smallChestNumberHeightInches || ord.matchedPreset?.smallChestNumberHeightInches || 3.0;
+        const chestNumHeight = presetChestHeight * scale;
+        const tightChestNum = calculateTightTextDimensions(ord.number, 'number', ord.matchedPreset, chestNumHeight);
+
+        smallChestNumberBlocks.push({
+          id: `${ord.id}-chest-number`,
+          orderId: ord.id,
+          itemType: 'number',
+          customerName: `${ord.customerName} (Chest #${ord.number})`,
+          number: ord.number,
+          designCode: ord.designCode,
+          preset: ord.matchedPreset,
+          w: tightChestNum.widthInches,
+          h: tightChestNum.heightInches,
+          garmentSize: ord.garmentSize,
+          isChestNumber: true,
+          parentNumber: ord.number,
+        });
+      }
     }
   });
 
@@ -317,6 +350,10 @@ export function generateAutoNestingLayout(
             rotation: 0,
             zIndex: zCounter++,
             garmentSize: block.garmentSize,
+            isChestNumber: block.isChestNumber,
+            isSplitDigit: block.isSplitDigit,
+            digitIndex: block.digitIndex,
+            parentNumber: block.parentNumber,
           });
 
           currentX += block.w + margin;
@@ -580,6 +617,62 @@ export function generateAutoNestingLayout(
       });
 
       currentX += block.w + curvedGap;
+      if (block.h > shelfHeight) {
+        shelfHeight = block.h;
+      }
+    }
+
+    // Advance Y after curved text
+    currentX = margin;
+    currentY += shelfHeight + margin + 0.25;
+    shelfHeight = 0;
+    currentRowIndex++;
+  }
+
+  // 4. Pack Small / Front Chest Numbers at the Very End / Bottom of the Sheet
+  // Lined up in their own dedicated consecutive rows in order/serial
+  if (smallChestNumberBlocks.length > 0) {
+    if (currentX > margin || shelfHeight > 0) {
+      currentX = margin;
+      currentY += shelfHeight + margin + 0.25;
+      shelfHeight = 0;
+      currentRowIndex++;
+    }
+
+    const pool = [...smallChestNumberBlocks];
+    const chestGap = Math.max(margin, 0.20);
+
+    while (pool.length > 0) {
+      const block = pool.shift()!;
+
+      // Check if block exceeds 39" roll edge; wrap to new row cleanly
+      if (currentX + block.w > rollWidth - chestGap && currentX > chestGap) {
+        currentX = margin;
+        currentY += shelfHeight + chestGap;
+        shelfHeight = 0;
+        currentRowIndex++;
+      }
+
+      canvasItems.push({
+        id: block.id,
+        orderId: block.orderId,
+        itemType: block.itemType,
+        customerName: block.customerName,
+        number: block.number,
+        designCode: block.designCode,
+        preset: block.preset,
+        x: parseFloat(currentX.toFixed(2)),
+        y: parseFloat(currentY.toFixed(2)),
+        width: parseFloat(block.w.toFixed(2)),
+        height: parseFloat(block.h.toFixed(2)),
+        rotation: 0,
+        zIndex: zCounter++,
+        garmentSize: block.garmentSize,
+        isChestNumber: true,
+        parentNumber: block.parentNumber,
+      });
+
+      currentX += block.w + chestGap;
       if (block.h > shelfHeight) {
         shelfHeight = block.h;
       }

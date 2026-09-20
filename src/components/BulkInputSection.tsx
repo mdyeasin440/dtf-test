@@ -12,6 +12,7 @@ import {
   Layers,
   Ruler,
   HelpCircle,
+  Shirt,
 } from 'lucide-react';
 import { DesignPreset, OrderItem } from '../types';
 import { parseBulkInput } from '../utils/nestingEngine';
@@ -34,14 +35,49 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
   onGenerateLayout,
 }) => {
   const [defaultGarmentSize, setDefaultGarmentSize] = useState<'Adult' | 'Youth' | 'Infant'>('Adult');
+  const [batchChestMode, setBatchChestMode] = useState<'preset' | 'on' | 'off'>('preset');
+  const [batchChestHeight, setBatchChestHeight] = useState<number>(3.0);
 
   const presetsMap = new Map<string, DesignPreset>(presets.map((p) => [p.code.toUpperCase(), p]));
+
+  const applyBatchChestToOrders = (orders: OrderItem[], mode: 'preset' | 'on' | 'off', height: number): OrderItem[] => {
+    return orders.map((ord) => {
+      if (mode === 'on') {
+        return { ...ord, hasSmallChestNumber: true, smallChestNumberHeightInches: height };
+      }
+      if (mode === 'off') {
+        return { ...ord, hasSmallChestNumber: false };
+      }
+      // preset default
+      return {
+        ...ord,
+        hasSmallChestNumber: Boolean(ord.matchedPreset?.hasSmallChestNumber),
+        smallChestNumberHeightInches: ord.matchedPreset?.smallChestNumberHeightInches || 3.0,
+      };
+    });
+  };
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setRawText(val);
     const parsed = parseBulkInput(val, presetsMap);
-    setParsedOrders(parsed);
+    setParsedOrders(applyBatchChestToOrders(parsed, batchChestMode, batchChestHeight));
+  };
+
+  const handleToggleRowChest = (orderId: string) => {
+    setParsedOrders((prev) =>
+      prev.map((ord) => {
+        if (ord.id === orderId) {
+          const currentEnabled = Boolean(ord.hasSmallChestNumber ?? ord.matchedPreset?.hasSmallChestNumber);
+          return {
+            ...ord,
+            hasSmallChestNumber: !currentEnabled,
+            smallChestNumberHeightInches: ord.smallChestNumberHeightInches || ord.matchedPreset?.smallChestNumberHeightInches || 3.0,
+          };
+        }
+        return ord;
+      })
+    );
   };
 
   const handleLoadSample = (sampleNum: number) => {
@@ -183,27 +219,110 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
           </div>
 
           {/* Sizing & Batch Options */}
-          <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-5 shadow-xl">
-            <h3 className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-3">
-              Batch Scale & Garment Sizing Preset
-            </h3>
-            <div className="grid grid-cols-3 gap-3">
-              {(['Adult', 'Youth', 'Infant'] as const).map((sz) => (
+          <div className="bg-zinc-900/50 rounded-xl border border-zinc-800 p-5 shadow-xl space-y-4">
+            <div>
+              <h3 className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-3">
+                Batch Scale & Garment Sizing Preset
+              </h3>
+              <div className="grid grid-cols-3 gap-3">
+                {(['Adult', 'Youth', 'Infant'] as const).map((sz) => (
+                  <button
+                    key={sz}
+                    onClick={() => setDefaultGarmentSize(sz)}
+                    className={`p-3 rounded-lg border text-center transition-all ${
+                      defaultGarmentSize === sz
+                        ? 'bg-red-600/10 border-red-500/30 text-red-400 font-bold'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    <div className="text-xs font-bold uppercase tracking-wider">{sz} Size</div>
+                    <div className="text-[10px] text-zinc-500 mt-0.5 font-mono">
+                      {sz === 'Adult' ? '100% (12" Name / 9.5" Num)' : sz === 'Youth' ? '80% (9.6" Name / 7.6" Num)' : '65% (7.8" Name / 6.1" Num)'}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Small / Chest Numbers (World Cup Style Front Number) Batch Controls */}
+            <div className="pt-3 border-t border-zinc-800/80">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center space-x-2">
+                  <Shirt className="w-4 h-4 text-emerald-400" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-300">
+                    Front / Chest Numbers (World Cup Style)
+                  </span>
+                </div>
+                <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/40 px-2 py-0.5 rounded">
+                  {batchChestMode === 'on' ? `All ON (${batchChestHeight.toFixed(1)}″)` : batchChestMode === 'off' ? 'All OFF' : 'Preset Defaults'}
+                </span>
+              </div>
+
+              <div className="flex items-center space-x-2">
                 <button
-                  key={sz}
-                  onClick={() => setDefaultGarmentSize(sz)}
-                  className={`p-3 rounded-lg border text-center transition-all ${
-                    defaultGarmentSize === sz
-                      ? 'bg-red-600/10 border-red-500/30 text-red-400 font-bold'
-                      : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
+                  type="button"
+                  onClick={() => {
+                    setBatchChestMode('preset');
+                    setParsedOrders((prev) => applyBatchChestToOrders(prev, 'preset', batchChestHeight));
+                  }}
+                  className={`flex-1 py-1.5 px-2 text-[10px] font-mono font-bold uppercase rounded border transition-all ${
+                    batchChestMode === 'preset'
+                      ? 'bg-zinc-800 text-white border-zinc-600'
+                      : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-white'
                   }`}
                 >
-                  <div className="text-xs font-bold uppercase tracking-wider">{sz} Size</div>
-                  <div className="text-[10px] text-zinc-500 mt-0.5 font-mono">
-                    {sz === 'Adult' ? '100% (12" Name / 9.5" Num)' : sz === 'Youth' ? '80% (9.6" Name / 7.6" Num)' : '65% (7.8" Name / 6.1" Num)'}
-                  </div>
+                  Preset Auto
                 </button>
-              ))}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBatchChestMode('on');
+                    setParsedOrders((prev) => applyBatchChestToOrders(prev, 'on', batchChestHeight));
+                  }}
+                  className={`flex-1 py-1.5 px-2 text-[10px] font-mono font-bold uppercase rounded border transition-all ${
+                    batchChestMode === 'on'
+                      ? 'bg-emerald-600 text-white border-emerald-500 shadow'
+                      : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-emerald-400'
+                  }`}
+                >
+                  Force All ON
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBatchChestMode('off');
+                    setParsedOrders((prev) => applyBatchChestToOrders(prev, 'off', batchChestHeight));
+                  }}
+                  className={`flex-1 py-1.5 px-2 text-[10px] font-mono font-bold uppercase rounded border transition-all ${
+                    batchChestMode === 'off'
+                      ? 'bg-red-600/30 text-red-300 border-red-500/60 shadow'
+                      : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-white'
+                  }`}
+                >
+                  Force All OFF
+                </button>
+
+                {batchChestMode === 'on' && (
+                  <div className="flex items-center space-x-1 pl-2 border-l border-zinc-800">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="1.5"
+                      max="5.0"
+                      value={batchChestHeight}
+                      onChange={(e) => {
+                        const h = parseFloat(e.target.value) || 3.0;
+                        setBatchChestHeight(h);
+                        setParsedOrders((prev) => applyBatchChestToOrders(prev, 'on', h));
+                      }}
+                      className="w-16 bg-zinc-950 text-emerald-400 px-2 py-1 rounded border border-emerald-500/50 text-xs font-mono font-bold text-center"
+                    />
+                    <span className="text-[10px] font-mono text-zinc-400">Inches</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -268,12 +387,42 @@ export const BulkInputSection: React.FC<BulkInputSectionProps> = ({
                             )}
                           </td>
                           <td className="p-3 text-white font-bold tracking-wider uppercase">{ord.customerName}</td>
-                          <td className="p-3 text-red-500 font-black text-sm">{ord.number}</td>
+                          <td className="p-3 text-red-500 font-black text-sm">
+                            <div className="flex items-center space-x-1.5">
+                              <span>{ord.number}</span>
+                              {Boolean(ord.hasSmallChestNumber ?? ord.matchedPreset?.hasSmallChestNumber) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleRowChest(ord.id)}
+                                  title="Chest number enabled for front of jersey. Click to toggle."
+                                  className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 transition-all flex items-center space-x-1"
+                                >
+                                  <Shirt className="w-2.5 h-2.5" />
+                                  <span>Front</span>
+                                </button>
+                              )}
+                              {!Boolean(ord.hasSmallChestNumber ?? ord.matchedPreset?.hasSmallChestNumber) && ord.number && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleRowChest(ord.id)}
+                                  title="Add small chest number for front of jersey"
+                                  className="text-[9px] font-mono text-zinc-600 hover:text-zinc-400 px-1 py-0.5 rounded border border-dashed border-zinc-800 hover:border-zinc-600 transition-all"
+                                >
+                                  +Front
+                                </button>
+                              )}
+                            </div>
+                          </td>
                           <td className="p-3 text-zinc-400">{ord.garmentSize}</td>
                           <td className="p-3 text-zinc-400 text-[11px]">
-                            {ord.nameWidthInches}" x {ord.nameHeightInches}" Name
-                            <br />
-                            {ord.numberWidthInches}" x {ord.numberHeightInches}" Num
+                            <div>{ord.nameWidthInches}" x {ord.nameHeightInches}" Name</div>
+                            <div>{ord.numberWidthInches}" x {ord.numberHeightInches}" Back Num</div>
+                            {Boolean(ord.hasSmallChestNumber ?? ord.matchedPreset?.hasSmallChestNumber) && (
+                              <div className="text-emerald-400 font-bold flex items-center space-x-1 mt-0.5">
+                                <Shirt className="w-3 h-3 text-emerald-400 shrink-0" />
+                                <span>{(ord.smallChestNumberHeightInches || ord.matchedPreset?.smallChestNumberHeightInches || 3.0).toFixed(1)}″ Front Chest Num</span>
+                              </div>
+                            )}
                           </td>
                           <td className="p-3">
                             {ord.status === 'matched' ? (

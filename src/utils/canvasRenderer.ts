@@ -144,6 +144,28 @@ export function renderItemToCanvas(
     renderNumberText(ctx, item.number, preset, itemWPx, itemHPx, scale);
   }
 
+  // Draw FRONT badge for small chest numbers
+  if (item.isChestNumber && options.showCutLines) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(5, 150, 105, 0.92)';
+    const tagH = Math.max(9, Math.min(16, 0.2 * scale));
+    const tagW = Math.max(28, Math.min(48, 0.6 * scale));
+    const tagY = Math.max(0, itemHPx - tagH);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.beginPath();
+      ctx.roundRect(0, tagY, tagW, tagH, [0, 3, 0, 3]);
+      ctx.fill();
+    } else {
+      ctx.fillRect(0, tagY, tagW, tagH);
+    }
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${Math.max(6, Math.floor(tagH * 0.65))}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('FRONT', tagW / 2, tagY + tagH / 2);
+    ctx.restore();
+  }
+
   ctx.restore();
 }
 

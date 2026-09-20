@@ -195,6 +195,8 @@ async function ensureD1Tables(env: Env) {
       'defaultNameWidthInches REAL DEFAULT 12.0',
       'defaultNameHeightInches REAL DEFAULT 2.2',
       'defaultNumberHeightInches REAL DEFAULT 9.5',
+      'hasSmallChestNumber INTEGER DEFAULT 0',
+      'smallChestNumberHeightInches REAL DEFAULT 3.0',
       'notes TEXT',
     ];
     for (const col of alterCols) {
@@ -231,6 +233,8 @@ function buildUpsertStatement(env: Env, body: any) {
   const defaultNameWidthInches = Number(body.defaultNameWidthInches ?? 12.0);
   const defaultNameHeightInches = Number(body.defaultNameHeightInches ?? 2.2);
   const defaultNumberHeightInches = Number(body.defaultNumberHeightInches ?? 9.5);
+  const hasSmallChestNumber = body.hasSmallChestNumber ? 1 : 0;
+  const smallChestNumberHeightInches = Number(body.smallChestNumberHeightInches ?? 3.0);
   const notes = body.notes || '';
   const updatedAt = new Date().toISOString();
 
@@ -239,8 +243,9 @@ function buildUpsertStatement(env: Env, body: any) {
       id, code, teamName, league, season, fontFamily, customFontDataUrl,
       textColor, strokeColor, strokeWidth, hasInnerOutline, innerOutlineColor,
       textEffect, arcAmount, letterSpacing, numberStyle, numberAssets, letterAssets,
-      defaultNameWidthInches, defaultNameHeightInches, defaultNumberHeightInches, notes, updatedAt
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      defaultNameWidthInches, defaultNameHeightInches, defaultNumberHeightInches,
+      hasSmallChestNumber, smallChestNumberHeightInches, notes, updatedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(code) DO UPDATE SET
       teamName=excluded.teamName,
       league=excluded.league,
@@ -261,13 +266,16 @@ function buildUpsertStatement(env: Env, body: any) {
       defaultNameWidthInches=excluded.defaultNameWidthInches,
       defaultNameHeightInches=excluded.defaultNameHeightInches,
       defaultNumberHeightInches=excluded.defaultNumberHeightInches,
+      hasSmallChestNumber=excluded.hasSmallChestNumber,
+      smallChestNumberHeightInches=excluded.smallChestNumberHeightInches,
       notes=excluded.notes,
       updatedAt=excluded.updatedAt`
   ).bind(
     id, code, teamName, league, season, fontFamily, customFontDataUrl,
     textColor, strokeColor, strokeWidth, hasInnerOutline, innerOutlineColor,
     textEffect, arcAmount, letterSpacing, numberStyle, numberAssets, letterAssets,
-    defaultNameWidthInches, defaultNameHeightInches, defaultNumberHeightInches, notes, updatedAt
+    defaultNameWidthInches, defaultNameHeightInches, defaultNumberHeightInches,
+    hasSmallChestNumber, smallChestNumberHeightInches, notes, updatedAt
   );
 }
 
