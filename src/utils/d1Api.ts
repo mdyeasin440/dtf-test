@@ -154,7 +154,12 @@ export function getLocalPresets(): DesignPreset[] {
       if (Array.isArray(parsed)) {
         for (const p of parsed) {
           if (p && p.code && !deletedSet.has(p.code.toUpperCase())) {
-            presetMap.set(p.code.toUpperCase(), p);
+            const sanitized: DesignPreset = {
+              ...p,
+              hasSmallChestNumber: Boolean(p.hasSmallChestNumber),
+              smallChestNumberHeightInches: p.smallChestNumberHeightInches != null ? Number(p.smallChestNumberHeightInches) : 3.0,
+            };
+            presetMap.set(p.code.toUpperCase(), sanitized);
           }
         }
       }
@@ -166,7 +171,12 @@ export function getLocalPresets(): DesignPreset[] {
   // Guarantee user-saved custom presets take priority
   for (const p of customPresets) {
     if (p && p.code && !deletedSet.has(p.code.toUpperCase())) {
-      presetMap.set(p.code.toUpperCase(), p);
+      const sanitized: DesignPreset = {
+        ...p,
+        hasSmallChestNumber: Boolean(p.hasSmallChestNumber),
+        smallChestNumberHeightInches: p.smallChestNumberHeightInches != null ? Number(p.smallChestNumberHeightInches) : 3.0,
+      };
+      presetMap.set(p.code.toUpperCase(), sanitized);
     }
   }
 
@@ -199,16 +209,90 @@ export function preloadPresetFonts(presets: DesignPreset[]) {
   }
 }
 
+export interface DatabaseDiagnostics {
+  success: boolean;
+  d1Connected: boolean;
+  d1DatabaseName?: string;
+  d1Error?: string;
+  tables?: string[];
+  columns?: string[];
+  hasSmallChestNumber?: boolean;
+  hasSmallChestNumberHeightInches?: boolean;
+  migrationNeeded?: boolean;
+  presetCount?: number;
+  deletedCount?: number;
+  r2BucketBound?: boolean;
+  r2BucketName?: string;
+  timestamp?: string;
+}
+
 /**
- * Check Cloudflare D1 & R2 connectivity status
+ * Fetch detailed database diagnostics from Cloudflare D1 & R2
+ */
+export async function fetchDatabaseDiagnostics(): Promise<DatabaseDiagnostics> {
+  try {
+    const res = await fetch('/api/database/diagnostics');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err: any) {
+    return {
+      success: false,
+      d1Connected: false,
+      d1Error: err.message || 'Diagnostics unreachable',
+      migrationNeeded: false,
+    };
+  }
+}
+
+/**
+ * Run one-click auto-migration on Cloudflare D1 database to add any missing columns or indexes
+ */
+export async function runDatabaseMigration(): Promise<{
+  success: boolean;
+  message?: string;
+  migrated?: string[];
+  errors?: string[];
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/database/migrate', { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Migration failed with HTTP ${res.status}`);
+    }
+    return await res.json();
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || 'Migration request failed',
+    };
+  }
+}
+
+/**
+ * Check Cloudflare D1 & R2 connectivity and schema status
  */
 export async function checkCloudflareStatus(): Promise<{
   connected: boolean;
   database: string;
   storage: string;
+  hasSmallChestNumber?: boolean;
+  migrationNeeded?: boolean;
+  presetCount?: number;
   error?: string;
 }> {
   try {
+    const diag = await fetchDatabaseDiagnostics();
+    if (diag.d1Connected) {
+      return {
+        connected: true,
+        database: diag.d1DatabaseName || 'Cloudflare D1 (spd-dtf)',
+        storage: diag.r2BucketName || 'Cloudflare R2',
+        hasSmallChestNumber: diag.hasSmallChestNumber,
+        migrationNeeded: diag.migrationNeeded,
+        presetCount: diag.presetCount,
+      };
+    }
     const res = await fetch('/api/health');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
@@ -226,6 +310,7 @@ export async function checkCloudflareStatus(): Promise<{
     };
   }
 }
+
 
 /**
  * Fetch all design presets from the Cloudflare D1 database via API.
@@ -256,14 +341,38 @@ export async function fetchPresetsFromD1(): Promise<DesignPreset[]> {
       // 2. Add cloud presets from D1 database (excluding deleted)
       for (const p of cloudPresets) {
         if (p && p.code && !deletedSet.has(p.code.toUpperCase())) {
-          presetMap.set(p.code.toUpperCase(), p);
+          const sanitized: DesignPreset = {
+            ...p,
+            code: p.code.trim().toUpperCase(),
+            hasSmallChestNumber: Boolean(p.hasSmallChestNumber),
+            smallChestNumberHeightInches: p.smallChestNumberHeightInches != null ? Number(p.smallChestNumberHeightInches) : 3.0,
+          };
+          presetMap.set(sanitized.code, sanitized);
         }
       }
 
-      // 3. Preserve local custom presets that are not deleted and not in cloud yet
+      // 3. Preserve local custom presets (compare timestamps so user edits with chest number settings persist)
       for (const p of customPresets) {
-        if (p && p.code && !deletedSet.has(p.code.toUpperCase()) && !presetMap.has(p.code.toUpperCase())) {
-          presetMap.set(p.code.toUpperCase(), p);
+        if (p && p.code && !deletedSet.has(p.code.toUpperCase())) {
+          const upperCode = p.code.trim().toUpperCase();
+          const cloudP = presetMap.get(upperCode);
+          const sanitizedLocal: DesignPreset = {
+            ...p,
+            code: upperCode,
+            hasSmallChestNumber: Boolean(p.hasSmallChestNumber),
+            smallChestNumberHeightInches: p.smallChestNumberHeightInches != null ? Number(p.smallChestNumberHeightInches) : 3.0,
+          };
+
+          if (!cloudP) {
+            presetMap.set(upperCode, sanitizedLocal);
+          } else {
+            const cloudTime = cloudP.updatedAt ? new Date(cloudP.updatedAt).getTime() : 0;
+            const localTime = p.updatedAt ? new Date(p.updatedAt).getTime() : 0;
+            // If local is newer or has explicit chest number enabled that cloud missed, prioritize local
+            if (localTime >= cloudTime || (sanitizedLocal.hasSmallChestNumber && !cloudP.hasSmallChestNumber)) {
+              presetMap.set(upperCode, sanitizedLocal);
+            }
+          }
         }
       }
 
@@ -376,7 +485,21 @@ export async function savePresetToD1(
     }
 
     const data = await res.json();
-    const finalPreset = data.preset || presetWithR2Assets;
+    const finalPreset: DesignPreset = {
+      ...presetWithR2Assets,
+      ...(data.preset || {}),
+      hasSmallChestNumber: Boolean(
+        data.preset && data.preset.hasSmallChestNumber !== undefined
+          ? data.preset.hasSmallChestNumber
+          : presetWithR2Assets.hasSmallChestNumber
+      ),
+      smallChestNumberHeightInches:
+        data.preset && data.preset.smallChestNumberHeightInches != null
+          ? Number(data.preset.smallChestNumberHeightInches)
+          : (presetWithR2Assets.smallChestNumberHeightInches != null
+              ? Number(presetWithR2Assets.smallChestNumberHeightInches)
+              : 3.0),
+    };
 
     // 3. Update local cache with permanent URLs
     const local = getLocalPresets();

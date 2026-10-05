@@ -24,10 +24,13 @@ CREATE TABLE IF NOT EXISTS design_presets (
   defaultNameWidthInches REAL DEFAULT 12.0,
   defaultNameHeightInches REAL DEFAULT 2.2,
   defaultNumberHeightInches REAL DEFAULT 9.5,
+  hasSmallChestNumber INTEGER DEFAULT 0,
+  smallChestNumberHeightInches REAL DEFAULT 3.0,
   notes TEXT,
   updatedAt TEXT NOT NULL
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_presets_code_unique ON design_presets (code);
 CREATE INDEX IF NOT EXISTS idx_presets_code ON design_presets (code);
 CREATE INDEX IF NOT EXISTS idx_presets_league ON design_presets (league);
 

@@ -127,12 +127,36 @@ function safeJsonParse(val: any) {
   return undefined;
 }
 
-// Auto-initialize SQLite tables in D1 if they do not exist
-async function ensureD1Tables(env: Env) {
+// Column definitions for auto-migration
+const DESIGN_PRESET_COLUMNS: { name: string; type: string }[] = [
+  { name: 'customFontDataUrl', type: 'TEXT' },
+  { name: 'numberAssets', type: 'TEXT' },
+  { name: 'letterAssets', type: 'TEXT' },
+  { name: 'numberStyle', type: 'TEXT' },
+  { name: 'hasInnerOutline', type: 'INTEGER DEFAULT 0' },
+  { name: 'innerOutlineColor', type: 'TEXT' },
+  { name: 'textEffect', type: "TEXT DEFAULT 'none'" },
+  { name: 'arcAmount', type: 'INTEGER DEFAULT 0' },
+  { name: 'letterSpacing', type: 'REAL DEFAULT 3' },
+  { name: 'defaultNameWidthInches', type: 'REAL DEFAULT 12.0' },
+  { name: 'defaultNameHeightInches', type: 'REAL DEFAULT 2.2' },
+  { name: 'defaultNumberHeightInches', type: 'REAL DEFAULT 9.5' },
+  { name: 'hasSmallChestNumber', type: 'INTEGER DEFAULT 0' },
+  { name: 'smallChestNumberHeightInches', type: 'REAL DEFAULT 3.0' },
+  { name: 'notes', type: 'TEXT' },
+];
+
+// Auto-initialize SQLite tables and migrate columns in D1 if they do not exist
+async function ensureD1Tables(env: Env): Promise<{ success: boolean; migrated: string[]; errors: string[] }> {
+  const migrated: string[] = [];
+  const errors: string[] = [];
+
   if (!env || !env.MY_DB) {
     throw new Error('Cloudflare D1 binding "MY_DB" is not configured or available in environment.');
   }
+
   try {
+    // 1. Core tables
     await env.MY_DB.exec(`
       CREATE TABLE IF NOT EXISTS design_presets (
         id TEXT PRIMARY KEY,
@@ -156,6 +180,8 @@ async function ensureD1Tables(env: Env) {
         defaultNameWidthInches REAL DEFAULT 12.0,
         defaultNameHeightInches REAL DEFAULT 2.2,
         defaultNumberHeightInches REAL DEFAULT 9.5,
+        hasSmallChestNumber INTEGER DEFAULT 0,
+        smallChestNumberHeightInches REAL DEFAULT 3.0,
         notes TEXT,
         updatedAt TEXT NOT NULL
       );
@@ -180,35 +206,40 @@ async function ensureD1Tables(env: Env) {
         createdAt TEXT NOT NULL
       );
     `);
+    migrated.push('Core tables verified');
+  } catch (err: any) {
+    errors.push(`Table creation error: ${err.message}`);
+  }
 
-    // Auto-migrate schema in case table was created with an earlier version
-    const alterCols = [
-      'customFontDataUrl TEXT',
-      'numberAssets TEXT',
-      'letterAssets TEXT',
-      'numberStyle TEXT',
-      'hasInnerOutline INTEGER DEFAULT 0',
-      'innerOutlineColor TEXT',
-      'textEffect TEXT DEFAULT "none"',
-      'arcAmount INTEGER DEFAULT 0',
-      'letterSpacing REAL DEFAULT 3',
-      'defaultNameWidthInches REAL DEFAULT 12.0',
-      'defaultNameHeightInches REAL DEFAULT 2.2',
-      'defaultNumberHeightInches REAL DEFAULT 9.5',
-      'hasSmallChestNumber INTEGER DEFAULT 0',
-      'smallChestNumberHeightInches REAL DEFAULT 3.0',
-      'notes TEXT',
-    ];
-    for (const col of alterCols) {
-      try {
-        await env.MY_DB.exec(`ALTER TABLE design_presets ADD COLUMN ${col};`);
-      } catch (_) {
-        // column already exists
+  // 2. Ensure unique index on code to make ON CONFLICT(code) 100% reliable
+  try {
+    await env.MY_DB.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_presets_code_unique ON design_presets (code);`);
+    migrated.push('Unique index idx_presets_code_unique verified');
+  } catch (err: any) {
+    // Already exists or duplicate codes present
+    errors.push(`Index notice: ${err.message}`);
+  }
+
+  // 3. Inspect existing columns via PRAGMA table_info and add missing ones
+  try {
+    const colInfo = await env.MY_DB.prepare(`PRAGMA table_info(design_presets)`).all<any>();
+    const existingCols = new Set((colInfo.results || []).map((c: any) => c.name));
+
+    for (const col of DESIGN_PRESET_COLUMNS) {
+      if (!existingCols.has(col.name)) {
+        try {
+          await env.MY_DB.exec(`ALTER TABLE design_presets ADD COLUMN ${col.name} ${col.type};`);
+          migrated.push(`Added missing column ${col.name}`);
+        } catch (alterErr: any) {
+          errors.push(`Column ${col.name} notice: ${alterErr.message}`);
+        }
       }
     }
-  } catch (e: any) {
-    console.warn('ensureD1Tables warning:', e);
+  } catch (pragmaErr: any) {
+    errors.push(`PRAGMA inspect error: ${pragmaErr.message}`);
   }
+
+  return { success: errors.length === 0, migrated, errors };
 }
 
 function buildUpsertStatement(env: Env, body: any) {
@@ -279,6 +310,124 @@ function buildUpsertStatement(env: Env, body: any) {
   );
 }
 
+// Multi-tier foolproof saver: attempts fast ON CONFLICT upsert,
+// falls back to SELECT + UPDATE/INSERT, and finally falls back to dynamic column matching.
+async function saveOrUpdatePreset(env: Env, body: any): Promise<any> {
+  const id = body.id || `preset-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+  const code = (body.code || '').trim().toUpperCase();
+  const teamName = body.teamName || 'Custom Team';
+  const league = body.league || 'Custom';
+  const season = body.season || '2024-25';
+  const fontFamily = body.fontFamily || 'Oswald';
+  const customFontDataUrl = body.customFontDataUrl || null;
+  const textColor = body.textColor || '#FFFFFF';
+  const strokeColor = body.strokeColor || '#000000';
+  const strokeWidth = Number(body.strokeWidth ?? 4);
+  const hasInnerOutline = body.hasInnerOutline ? 1 : 0;
+  const innerOutlineColor = body.innerOutlineColor || null;
+  const textEffect = body.textEffect || 'none';
+  const arcAmount = Number(body.arcAmount ?? 0);
+  const letterSpacing = Number(body.letterSpacing ?? 3);
+  const numberStyle = body.numberStyle ? JSON.stringify(body.numberStyle) : null;
+  const numberAssets = body.numberAssets ? JSON.stringify(body.numberAssets) : null;
+  const letterAssets = body.letterAssets ? JSON.stringify(body.letterAssets) : null;
+  const defaultNameWidthInches = Number(body.defaultNameWidthInches ?? 12.0);
+  const defaultNameHeightInches = Number(body.defaultNameHeightInches ?? 2.2);
+  const defaultNumberHeightInches = Number(body.defaultNumberHeightInches ?? 9.5);
+  const hasSmallChestNumber = body.hasSmallChestNumber ? 1 : 0;
+  const smallChestNumberHeightInches = Number(body.smallChestNumberHeightInches ?? 3.0);
+  const notes = body.notes || '';
+  const updatedAt = new Date().toISOString();
+
+  // Tier 1: Try standard ON CONFLICT
+  try {
+    const stmt = buildUpsertStatement(env, body);
+    await stmt.run();
+    return;
+  } catch (tier1Err: any) {
+    console.warn('Tier 1 upsert failed, executing Tier 2 check-and-update/insert:', tier1Err.message);
+  }
+
+  // Tier 2: Check if row exists by code
+  const existing = await env.MY_DB.prepare(
+    `SELECT id FROM design_presets WHERE UPPER(code) = ?`
+  ).bind(code).first<any>();
+
+  if (existing) {
+    try {
+      await env.MY_DB.prepare(
+        `UPDATE design_presets SET
+          teamName=?, league=?, season=?, fontFamily=?, customFontDataUrl=?,
+          textColor=?, strokeColor=?, strokeWidth=?, hasInnerOutline=?, innerOutlineColor=?,
+          textEffect=?, arcAmount=?, letterSpacing=?, numberStyle=?, numberAssets=?, letterAssets=?,
+          defaultNameWidthInches=?, defaultNameHeightInches=?, defaultNumberHeightInches=?,
+          hasSmallChestNumber=?, smallChestNumberHeightInches=?, notes=?, updatedAt=?
+        WHERE UPPER(code) = ?`
+      ).bind(
+        teamName, league, season, fontFamily, customFontDataUrl,
+        textColor, strokeColor, strokeWidth, hasInnerOutline, innerOutlineColor,
+        textEffect, arcAmount, letterSpacing, numberStyle, numberAssets, letterAssets,
+        defaultNameWidthInches, defaultNameHeightInches, defaultNumberHeightInches,
+        hasSmallChestNumber, smallChestNumberHeightInches, notes, updatedAt, code
+      ).run();
+      return;
+    } catch (tier2Err: any) {
+      console.warn('Tier 2 update failed, trying Tier 3 dynamic column matching:', tier2Err.message);
+    }
+  } else {
+    try {
+      await env.MY_DB.prepare(
+        `INSERT INTO design_presets (
+          id, code, teamName, league, season, fontFamily, customFontDataUrl,
+          textColor, strokeColor, strokeWidth, hasInnerOutline, innerOutlineColor,
+          textEffect, arcAmount, letterSpacing, numberStyle, numberAssets, letterAssets,
+          defaultNameWidthInches, defaultNameHeightInches, defaultNumberHeightInches,
+          hasSmallChestNumber, smallChestNumberHeightInches, notes, updatedAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        id, code, teamName, league, season, fontFamily, customFontDataUrl,
+        textColor, strokeColor, strokeWidth, hasInnerOutline, innerOutlineColor,
+        textEffect, arcAmount, letterSpacing, numberStyle, numberAssets, letterAssets,
+        defaultNameWidthInches, defaultNameHeightInches, defaultNumberHeightInches,
+        hasSmallChestNumber, smallChestNumberHeightInches, notes, updatedAt
+      ).run();
+      return;
+    } catch (tier2InsertErr: any) {
+      console.warn('Tier 2 insert failed, trying Tier 3 dynamic column matching:', tier2InsertErr.message);
+    }
+  }
+
+  // Tier 3: Query PRAGMA table_info to only touch columns that truly exist in SQLite table
+  const colInfo = await env.MY_DB.prepare(`PRAGMA table_info(design_presets)`).all<any>();
+  const validCols = new Set((colInfo.results || []).map((c: any) => c.name));
+
+  const allValues: Record<string, any> = {
+    id, code, teamName, league, season, fontFamily, customFontDataUrl,
+    textColor, strokeColor, strokeWidth, hasInnerOutline, innerOutlineColor,
+    textEffect, arcAmount, letterSpacing, numberStyle, numberAssets, letterAssets,
+    defaultNameWidthInches, defaultNameHeightInches, defaultNumberHeightInches,
+    hasSmallChestNumber, smallChestNumberHeightInches, notes, updatedAt
+  };
+
+  if (existing) {
+    const updateCols = Object.keys(allValues).filter((k) => k !== 'id' && k !== 'code' && validCols.has(k));
+    const setClause = updateCols.map((k) => `${k}=?`).join(', ');
+    const vals = updateCols.map((k) => allValues[k]);
+    vals.push(code);
+    await env.MY_DB.prepare(
+      `UPDATE design_presets SET ${setClause} WHERE UPPER(code) = ?`
+    ).bind(...vals).run();
+  } else {
+    const insertCols = Object.keys(allValues).filter((k) => validCols.has(k));
+    const placeholders = insertCols.map(() => '?').join(', ');
+    const vals = insertCols.map((k) => allValues[k]);
+    await env.MY_DB.prepare(
+      `INSERT INTO design_presets (${insertCols.join(', ')}) VALUES (${placeholders})`
+    ).bind(...vals).run();
+  }
+}
+
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -300,7 +449,7 @@ export default {
     // 1. If this is an API call, route through Worker backend logic
     if (path.startsWith('/api/')) {
       try {
-        // Health Check
+        // Health & Diagnostics Check
         if (path === '/api/health' && method === 'GET') {
           return jsonResponse({
             status: 'ok',
@@ -310,6 +459,78 @@ export default {
             timestamp: new Date().toISOString(),
           });
         }
+
+        // GET /api/database/diagnostics - Comprehensive Cloudflare D1 & R2 Health & Schema Inspector
+        if (path === '/api/database/diagnostics' && method === 'GET') {
+          let d1Connected = false;
+          let d1Error: string | undefined;
+          let tables: string[] = [];
+          let columns: string[] = [];
+          let presetCount = 0;
+          let deletedCount = 0;
+
+          if (env.MY_DB) {
+            try {
+              // 1. Check tables
+              const tableRes = await env.MY_DB.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all<any>();
+              tables = (tableRes.results || []).map((r) => r.name);
+              d1Connected = true;
+
+              // 2. Check columns in design_presets
+              if (tables.includes('design_presets')) {
+                const colRes = await env.MY_DB.prepare(`PRAGMA table_info(design_presets)`).all<any>();
+                columns = (colRes.results || []).map((c) => c.name);
+
+                const countRes = await env.MY_DB.prepare(`SELECT COUNT(*) as cnt FROM design_presets`).first<any>();
+                presetCount = countRes ? Number(countRes.cnt) : 0;
+              }
+
+              if (tables.includes('deleted_presets')) {
+                const delRes = await env.MY_DB.prepare(`SELECT COUNT(*) as cnt FROM deleted_presets`).first<any>();
+                deletedCount = delRes ? Number(delRes.cnt) : 0;
+              }
+            } catch (e: any) {
+              d1Connected = false;
+              d1Error = e.message;
+            }
+          }
+
+          const hasSmallChestNumber = columns.includes('hasSmallChestNumber');
+          const hasSmallChestNumberHeightInches = columns.includes('smallChestNumberHeightInches');
+          const r2BucketBound = Boolean(env.MY_BUCKET);
+
+          return jsonResponse({
+            success: true,
+            d1Connected,
+            d1DatabaseName: 'spideyjerseydtf (env.MY_DB)',
+            d1Error,
+            tables,
+            columns,
+            hasSmallChestNumber,
+            hasSmallChestNumberHeightInches,
+            migrationNeeded: d1Connected && (!hasSmallChestNumber || !hasSmallChestNumberHeightInches),
+            presetCount,
+            deletedCount,
+            r2BucketBound,
+            r2BucketName: r2BucketBound ? 'spidery-assets' : 'unbound (env.MY_BUCKET missing)',
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        // POST /api/database/migrate - One-click schema repair and auto-migration
+        if (path === '/api/database/migrate' && method === 'POST') {
+          if (!env.MY_DB) {
+            return jsonResponse({ success: false, error: 'Cloudflare D1 database binding MY_DB is not configured' }, 500);
+          }
+          const migrationResult = await ensureD1Tables(env);
+          return jsonResponse({
+            success: migrationResult.success,
+            message: 'Database schema migration executed on Cloudflare D1',
+            migrated: migrationResult.migrated,
+            errors: migrationResult.errors,
+          });
+        }
+
 
         // ==========================================
         // CLOUDFLARE R2 ASSET STORAGE ENDPOINTS
@@ -465,6 +686,8 @@ export default {
           const formatted = (results || []).map((row) => ({
             ...row,
             hasInnerOutline: Boolean(row.hasInnerOutline),
+            hasSmallChestNumber: Boolean(row.hasSmallChestNumber),
+            smallChestNumberHeightInches: row.smallChestNumberHeightInches != null ? Number(row.smallChestNumberHeightInches) : 3.0,
             numberStyle: safeJsonParse(row.numberStyle),
             numberAssets: safeJsonParse(row.numberAssets),
             letterAssets: safeJsonParse(row.letterAssets),
@@ -473,7 +696,7 @@ export default {
           return jsonResponse({ success: true, presets: formatted, deletedCodes, count: formatted.length });
         }
 
-        // POST /api/presets - Save single or array of presets
+        // POST /api/presets - Save single or array of presets with resilient schema tolerance
         if (path === '/api/presets' && method === 'POST') {
           if (!env.MY_DB) {
             return jsonResponse({
@@ -491,12 +714,11 @@ export default {
             if (body.length === 0) {
               return jsonResponse({ success: true, count: 0, presets: [] });
             }
-            const statements = body.map((item) => buildUpsertStatement(env, item));
-            await env.MY_DB.batch(statements);
 
-            // Unmark from deleted_presets
             for (const item of body) {
               if (item && item.code) {
+                await saveOrUpdatePreset(env, item);
+                // Unmark from deleted_presets
                 try {
                   await env.MY_DB.prepare(`DELETE FROM deleted_presets WHERE UPPER(code) = ?`).bind(String(item.code).toUpperCase()).run();
                 } catch (_) {}
@@ -514,8 +736,7 @@ export default {
             return jsonResponse({ success: false, error: 'Preset code is required' }, 400);
           }
 
-          const stmt = buildUpsertStatement(env, body);
-          await stmt.run();
+          await saveOrUpdatePreset(env, body);
 
           // Unmark from deleted_presets
           try {
@@ -524,11 +745,13 @@ export default {
 
           return jsonResponse({
             success: true,
-            message: 'Design preset saved to Cloudflare D1',
+            message: 'Design preset saved permanently to Cloudflare D1',
             preset: {
               ...body,
               id: body.id || `preset-${Date.now()}`,
               code: (body.code || '').trim().toUpperCase(),
+              hasSmallChestNumber: Boolean(body.hasSmallChestNumber),
+              smallChestNumberHeightInches: body.smallChestNumberHeightInches != null ? Number(body.smallChestNumberHeightInches) : 3.0,
               updatedAt: new Date().toISOString(),
             },
           });

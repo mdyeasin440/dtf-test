@@ -28,6 +28,10 @@ import {
   CheckCheck,
   Upload,
   Shirt,
+  Activity,
+  Wrench,
+  AlertTriangle,
+  ExternalLink,
 } from 'lucide-react';
 import { DesignPreset } from '../types';
 import { registerCustomFont } from '../utils/fontLoader';
@@ -41,6 +45,9 @@ import {
   uploadAssetToR2,
   fetchPresetsFromD1,
   checkCloudflareStatus,
+  fetchDatabaseDiagnostics,
+  runDatabaseMigration,
+  DatabaseDiagnostics,
 } from '../utils/d1Api';
 
 interface DatabaseManagerProps {
@@ -96,7 +103,14 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
     checked: false,
   });
 
-  useEffect(() => {
+  // Database Diagnostics & Schema Auto-Migration State
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [diagnosticsData, setDiagnosticsData] = useState<DatabaseDiagnostics | null>(null);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [cloudWarning, setCloudWarning] = useState<string | null>(null);
+  const [migrationLog, setMigrationLog] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const refreshCloudStatus = () => {
     checkCloudflareStatus().then((res) => {
       setCloudStatus({
         connected: res.connected,
@@ -104,8 +118,50 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
         storage: res.storage,
         checked: true,
       });
+      if (res.migrationNeeded) {
+        setCloudWarning('Schema Update Needed: Your Cloudflare D1 database is missing newly added columns (such as hasSmallChestNumber). Click "Inspect Cloud D1" to run one-click auto-migration.');
+      }
     });
+  };
+
+  useEffect(() => {
+    refreshCloudStatus();
   }, []);
+
+  const handleOpenDiagnostics = async () => {
+    setShowDiagnostics(true);
+    setMigrationLog(null);
+    const diag = await fetchDatabaseDiagnostics();
+    setDiagnosticsData(diag);
+  };
+
+  const handleRunMigration = async () => {
+    setIsMigrating(true);
+    setMigrationLog(null);
+    try {
+      const res = await runDatabaseMigration();
+      if (res.success) {
+        setMigrationLog({
+          message: `Database schema migration succeeded! (${(res.migrated || []).join(', ') || 'Schema up to date'})`,
+          type: 'success',
+        });
+        const diag = await fetchDatabaseDiagnostics();
+        setDiagnosticsData(diag);
+        setCloudWarning(null);
+        refreshCloudStatus();
+        setStatusMessage('D1 database schema migrated successfully!');
+      } else {
+        setMigrationLog({
+          message: `Migration notice: ${res.error || 'Check Cloudflare D1 connection in dashboard'}`,
+          type: 'error',
+        });
+      }
+    } catch (e: any) {
+      setMigrationLog({ message: `Migration request failed: ${e.message}`, type: 'error' });
+    } finally {
+      setIsMigrating(false);
+    }
+  };
 
   const handleRefreshFromCloud = async () => {
     setIsRefreshingCloud(true);
@@ -114,6 +170,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
       const latest = await fetchPresetsFromD1();
       setPresets(latest);
       setStatusMessage(`Synced ${latest.length} presets from Cloudflare D1 Database!`);
+      refreshCloudStatus();
     } catch (err: any) {
       setStatusMessage('Sync notice: using cached presets');
     } finally {
@@ -188,6 +245,11 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
       id: `preset-copy-${Date.now()}`,
       code: `${preset.code}-COPY`,
       teamName: `${preset.teamName} (Copy)`,
+      hasSmallChestNumber: Boolean(preset.hasSmallChestNumber),
+      smallChestNumberHeightInches:
+        preset.smallChestNumberHeightInches != null
+          ? Number(preset.smallChestNumberHeightInches)
+          : 3.0,
       updatedAt: new Date().toISOString(),
     };
 
@@ -239,6 +301,11 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
     const presetToSave: DesignPreset = {
       ...editingPreset,
       code: (editingPreset.code || '').trim().toUpperCase(),
+      hasSmallChestNumber: Boolean(editingPreset.hasSmallChestNumber),
+      smallChestNumberHeightInches:
+        editingPreset.smallChestNumberHeightInches != null
+          ? Number(editingPreset.smallChestNumberHeightInches)
+          : 3.0,
       updatedAt: new Date().toISOString(),
     };
 
@@ -267,25 +334,34 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
         const finalP = result.preset;
         setPresets((prev) => {
           const idx = prev.findIndex((p) => p.code.toUpperCase() === finalP.code.toUpperCase());
+          let next: DesignPreset[];
           if (idx >= 0) {
-            const next = [...prev];
+            next = [...prev];
             next[idx] = finalP;
-            return next;
+          } else {
+            next = [finalP, ...prev];
           }
-          return [finalP, ...prev];
+          saveLocalPresets(next);
+          return next;
         });
+        setCloudWarning(null);
         setStatusMessage(`Preset "${savedCode}" successfully saved to Cloudflare D1 Database & R2!`);
       } else {
-        setStatusMessage(`Preset "${savedCode}" saved locally (D1 sync notice: ${result.error})`);
+        const errMsg = result.error || 'D1 database column or connection error';
+        setCloudWarning(`Cloud Sync Notice: Preset "${savedCode}" is saved in browser cache, but could not be permanently written to Cloudflare D1 (${errMsg}). Click "Inspect Cloud D1" to run auto-migration.`);
+        setStatusMessage(`Preset "${savedCode}" saved locally (Cloud D1 notice: ${result.error})`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('D1 sync notice:', err);
+      const errMsg = err?.message || 'Network or database error';
+      setCloudWarning(`Cloud Sync Notice: Preset "${savedCode}" is saved locally, but failed to sync to Cloudflare D1 (${errMsg}).`);
       setStatusMessage(`Preset "${savedCode}" saved locally.`);
     } finally {
       setIsSavingCloud(false);
       setEditingPreset(null);
       setIsCreating(false);
-      setTimeout(() => setStatusMessage(''), 4500);
+      refreshCloudStatus();
+      setTimeout(() => setStatusMessage(''), 5000);
     }
   };
 
@@ -670,6 +746,15 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
 
         <div className="flex items-center space-x-3">
           <button
+            onClick={handleOpenDiagnostics}
+            title="Inspect Cloudflare D1 database connection, table columns, and schema"
+            className="flex items-center space-x-2 px-3 py-2 bg-zinc-900 hover:bg-zinc-800 text-sky-400 border border-sky-500/30 hover:border-sky-500 font-mono text-xs rounded transition-all shadow-md"
+          >
+            <Activity className="w-3.5 h-3.5 text-sky-400" />
+            <span>Cloud Diagnostics</span>
+          </button>
+
+          <button
             onClick={handleRefreshFromCloud}
             disabled={isRefreshingCloud}
             title="Sync all presets directly from Cloudflare D1"
@@ -689,6 +774,36 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
         </div>
       </div>
 
+      {/* Cloudflare Persistent Warning / Repair Banner if Cloud Sync encountered an issue */}
+      {cloudWarning && (
+        <div className="mb-6 p-4 rounded-xl border bg-amber-950/40 border-amber-500/40 text-amber-200 text-xs font-mono flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-start space-x-3">
+            <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-amber-300">Cloudflare D1 Synchronization Notice</p>
+              <p className="text-zinc-300 mt-0.5 text-[11px] leading-relaxed">{cloudWarning}</p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-2 shrink-0">
+            <button
+              onClick={handleRunMigration}
+              disabled={isMigrating}
+              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-black font-bold uppercase tracking-wider text-[10px] rounded transition-all flex items-center space-x-1.5 disabled:opacity-50"
+            >
+              <Wrench className={`w-3 h-3 ${isMigrating ? 'animate-spin' : ''}`} />
+              <span>{isMigrating ? 'Migrating D1...' : 'Auto-Repair D1 Schema'}</span>
+            </button>
+            <button
+              onClick={() => setCloudWarning(null)}
+              className="p-1 text-zinc-400 hover:text-white rounded"
+              title="Dismiss warning"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Cloud Connectivity Status Bar */}
       <div className="mb-6 p-3 rounded-lg border bg-zinc-950/80 border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
         <div className="flex items-center space-x-2.5">
@@ -703,6 +818,14 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
         </div>
 
         <div className="flex items-center space-x-2 text-[11px] text-zinc-400">
+          <button
+            onClick={handleOpenDiagnostics}
+            className="text-sky-400 hover:underline flex items-center space-x-1 font-semibold"
+          >
+            <Activity className="w-3 h-3" />
+            <span>Inspect Health</span>
+          </button>
+          <span className="text-zinc-600">•</span>
           <span>{presets.length} Presets Available</span>
           <span className="text-zinc-600">•</span>
           <span className="text-emerald-400 font-semibold">Multi-Device Cloud Ready</span>
@@ -716,6 +839,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
           <span>{statusMessage}</span>
         </div>
       )}
+
 
       {/* Filter and Search Bar */}
       <div className="bg-zinc-900/50 p-4 rounded-xl border border-zinc-800 mb-8 flex flex-col md:flex-row gap-4 justify-between items-center">
@@ -910,7 +1034,14 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
             <div className="flex items-center justify-between pt-3 border-t border-zinc-800">
               <button
                 onClick={() => {
-                  setEditingPreset(preset);
+                  setEditingPreset({
+                    ...preset,
+                    hasSmallChestNumber: Boolean(preset.hasSmallChestNumber),
+                    smallChestNumberHeightInches:
+                      preset.smallChestNumberHeightInches != null
+                        ? Number(preset.smallChestNumberHeightInches)
+                        : 3.0,
+                  });
                   setIsCreating(false);
                 }}
                 className="flex items-center space-x-1.5 text-xs font-bold uppercase tracking-wider text-red-400 hover:text-red-300"
@@ -2000,6 +2131,185 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
           </div>
         </div>
       )}
+
+      {/* Cloudflare D1 & R2 Diagnostics and Schema Repair Modal */}
+      {showDiagnostics && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-zinc-900 border border-zinc-700 w-full max-w-3xl rounded-2xl shadow-2xl p-6 my-8 font-mono text-xs">
+            <div className="flex items-center justify-between pb-4 border-b border-zinc-800">
+              <div className="flex items-center space-x-2.5">
+                <Database className="w-5 h-5 text-sky-400" />
+                <h2 className="text-base font-bold text-white uppercase tracking-wider">
+                  Cloudflare D1 & R2 Diagnostics & Schema Repair
+                </h2>
+              </div>
+              <button
+                onClick={() => setShowDiagnostics(false)}
+                className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-5">
+              {/* Status Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-zinc-400 uppercase text-[10px] font-bold">D1 Database Status</span>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        diagnosticsData?.d1Connected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                      }`}
+                    >
+                      {diagnosticsData?.d1Connected ? 'Connected' : 'Offline / Error'}
+                    </span>
+                  </div>
+                  <p className="text-white font-bold">{diagnosticsData?.d1DatabaseName || 'spideyjerseydtf (MY_DB)'}</p>
+                  <p className="text-zinc-500 text-[11px] mt-1">
+                    Presets stored in D1: <strong className="text-zinc-300">{diagnosticsData?.presetCount ?? '—'}</strong>
+                  </p>
+                  {diagnosticsData?.d1Error && (
+                    <p className="text-red-400 text-[11px] mt-2 bg-red-950/40 p-2 rounded border border-red-900/50">
+                      Error: {diagnosticsData.d1Error}
+                    </p>
+                  )}
+                </div>
+
+                <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-zinc-400 uppercase text-[10px] font-bold">R2 Storage Bucket</span>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        diagnosticsData?.r2BucketBound ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
+                      }`}
+                    >
+                      {diagnosticsData?.r2BucketBound ? 'Bound' : 'Not Bound'}
+                    </span>
+                  </div>
+                  <p className="text-white font-bold">{diagnosticsData?.r2BucketName || 'spidery-assets'}</p>
+                  <p className="text-zinc-500 text-[11px] mt-1">
+                    Stores custom TTF/OTF fonts and PNG numbers
+                  </p>
+                </div>
+              </div>
+
+              {/* Column Schema Verification Card */}
+              <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-zinc-300 font-bold uppercase text-[11px] flex items-center space-x-2">
+                    <Activity className="w-4 h-4 text-sky-400" />
+                    <span>Database Schema & Column Audit (design_presets table)</span>
+                  </span>
+                  <span className="text-zinc-500 text-[10px]">
+                    {diagnosticsData?.columns ? `${diagnosticsData.columns.length} columns verified` : 'Checking...'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                  <div className="flex items-center justify-between p-2 rounded bg-zinc-900 border border-zinc-800">
+                    <span className="text-zinc-300">hasSmallChestNumber (Chest toggle):</span>
+                    {diagnosticsData?.hasSmallChestNumber ? (
+                      <span className="text-emerald-400 font-bold flex items-center space-x-1">
+                        <CheckCheck className="w-3.5 h-3.5" />
+                        <span>Present (OK)</span>
+                      </span>
+                    ) : (
+                      <span className="text-amber-400 font-bold flex items-center space-x-1">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        <span>Missing in D1</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between p-2 rounded bg-zinc-900 border border-zinc-800">
+                    <span className="text-zinc-300">smallChestNumberHeightInches (Chest size):</span>
+                    {diagnosticsData?.hasSmallChestNumberHeightInches ? (
+                      <span className="text-emerald-400 font-bold flex items-center space-x-1">
+                        <CheckCheck className="w-3.5 h-3.5" />
+                        <span>Present (OK)</span>
+                      </span>
+                    ) : (
+                      <span className="text-amber-400 font-bold flex items-center space-x-1">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        <span>Missing in D1</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {diagnosticsData?.migrationNeeded && (
+                  <div className="mt-3 p-3 bg-amber-950/40 border border-amber-500/40 rounded text-amber-200 text-[11px]">
+                    <strong>Action Required:</strong> Your Cloudflare D1 database table was created before the chest number columns were introduced. Click the button below to auto-upgrade your database without losing any existing presets!
+                  </div>
+                )}
+              </div>
+
+              {/* Migration Action Button */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 bg-zinc-950/80 rounded-xl border border-zinc-800">
+                <div>
+                  <h4 className="font-bold text-white">One-Click D1 Database Auto-Migration</h4>
+                  <p className="text-zinc-400 text-[11px] mt-0.5">
+                    Ensures all missing columns (chest number toggle, heights, outlines) and unique indexes are added safely.
+                  </p>
+                </div>
+                <button
+                  onClick={handleRunMigration}
+                  disabled={isMigrating}
+                  className="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold uppercase tracking-wider text-xs rounded-lg transition-all flex items-center space-x-2 shrink-0 disabled:opacity-50"
+                >
+                  <Wrench className={`w-4 h-4 ${isMigrating ? 'animate-spin' : ''}`} />
+                  <span>{isMigrating ? 'Migrating D1 Schema...' : 'Run Auto-Migration Now'}</span>
+                </button>
+              </div>
+
+              {/* Migration result log */}
+              {migrationLog && (
+                <div
+                  className={`p-3 rounded-lg border text-[11px] ${
+                    migrationLog.type === 'success'
+                      ? 'bg-emerald-950/50 border-emerald-500/50 text-emerald-300'
+                      : 'bg-red-950/50 border-red-500/50 text-red-300'
+                  }`}
+                >
+                  {migrationLog.message}
+                </div>
+              )}
+
+              {/* Bengali & English Checklist Guide */}
+              <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 text-[11px] text-zinc-300 space-y-2">
+                <h4 className="font-bold text-white uppercase tracking-wider text-xs flex items-center space-x-2">
+                  <span>Cloudflare চেকলিস্ট ও সমস্যা সমাধানের গাইড (What to check):</span>
+                </h4>
+                <ol className="list-decimal pl-5 space-y-1.5 text-zinc-400">
+                  <li>
+                    <strong className="text-zinc-200">D1 Database Schema:</strong> নতুন প্রিসেট যোগ করতে গেলে <code className="text-sky-300">hasSmallChestNumber</code> এবং <code className="text-sky-300">smallChestNumberHeightInches</code> কলাম D1 টেবিলে থাকতে হবে। উপরের <strong>"Run Auto-Migration Now"</strong> বোতামে ক্লিক করলে এটি স্বয়ংক্রিয়ভাবে D1 টেবিলে যুক্ত হয়ে যাবে।
+                  </li>
+                  <li>
+                    <strong className="text-zinc-200">Cloudflare Worker Deployment:</strong> আপনি যদি সম্প্রতি কোড আপডেট করে থাকেন, তবে টার্মিনালে <code className="text-sky-300">npx wrangler deploy</code> চালিয়ে ক্লাউডফ্লেয়ার লাইভ ওয়ার্কার আপডেট হয়েছে কিনা তা নিশ্চিত করুন।
+                  </li>
+                  <li>
+                    <strong className="text-zinc-200">Cloudflare R2 Bucket Binding:</strong> ক্লাউড ড্যাশবোর্ডে <code className="text-sky-300">spidery-assets</code> বাকেট তৈরি থাকতে হবে এবং <code className="text-sky-300">wrangler.toml</code> ফাইলে <code className="text-sky-300">MY_BUCKET</code> বাইন্ডিং ঠিক থাকতে হবে, যাতে ফন্ট ও ছবির বড় ফাইল ক্লাউডে সেভ হতে পারে।
+                  </li>
+                  <li>
+                    <strong className="text-zinc-200">Auto-Fallback Protection:</strong> ক্লাউড সেভ কোনো কারণে ফেল করলে ডেটা যেন নষ্ট না হয় সেজন্য এটি ব্রাউজার লোকাল স্টোরেজে ব্যাকআপ থাকে। D1 মাইগ্রেশন রান করলেই এটি ক্লাউডে পার্মানেন্টলি সেভ হয়ে যাবে।
+                  </li>
+                </ol>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setShowDiagnostics(false)}
+                className="px-5 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded font-bold uppercase text-xs"
+              >
+                Close Diagnostics
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
