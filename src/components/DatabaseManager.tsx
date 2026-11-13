@@ -473,7 +473,8 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
 
       // Upload trimmed PNG to Cloudflare R2 bucket
       const sanitizedCode = (editingPreset.code || 'custom').replace(/[^a-zA-Z0-9_-]/g, '_');
-      const r2Key = `letters/${sanitizedCode}_letter_${letter}_${Date.now()}.png`;
+      const safeLetterKey = letter === '.' ? 'DOT' : letter.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const r2Key = `letters/${sanitizedCode}_letter_${safeLetterKey}_${Date.now()}.png`;
 
       const uploadRes = await uploadAssetToR2(r2Key, trimmed.dataUrl, 'image/png');
       const finalAssetUrl = uploadRes.url || trimmed.dataUrl;
@@ -491,6 +492,7 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
       setUploadingAssetKey(null);
     };
     reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const handleClearLetterAsset = (letter: string) => {
@@ -537,9 +539,12 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
       return { type: 'number', key: baseName };
     }
 
-    // 2. Exact single letter A-Z or special characters (Ö, É, A')
+    // 2. Exact single letter A-Z or special characters (Ö, É, A', Dot '.')
     if (targetScope === 'all' || targetScope === 'letters') {
       const norm = baseName.toUpperCase();
+      if (norm === '.' || norm === 'DOT' || norm === 'PERIOD' || norm === 'FULLSTOP') {
+        return { type: 'letter', key: '.' };
+      }
       if (norm === 'Ö' || norm === 'OE') return { type: 'letter', key: 'Ö' };
       if (norm === 'É' || norm === 'E_ACUTE' || norm === 'E-ACUTE' || norm === 'EACUTE') return { type: 'letter', key: 'É' };
       if (norm === "A'" || norm === 'A_APOS' || norm === 'A_QUOTE' || norm === 'A-APOS' || norm === 'A_PRIME' || norm === "K'" || norm === 'K_APOS') return { type: 'letter', key: "A'" };
@@ -560,8 +565,15 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
       if (numBoundaryMatch) return { type: 'number', key: numBoundaryMatch[1] };
     }
 
-    // 4. Letter prefix patterns: "letter_a", "char_B", "let-C", "alpha_d", "name_e", "A_white", "B_font", "letter_Ö", "letter_É", "letter_A'"
+    // 4. Letter prefix patterns: "letter_a", "char_B", "let-C", "alpha_d", "name_e", "A_white", "B_font", "letter_Ö", "letter_É", "letter_A'", "letter_dot"
     if (targetScope === 'all' || targetScope === 'letters') {
+      if (
+        /^(?:letter|char|let|alpha|name|font|l)[_\-\s]?(?:dot|period|fullstop|\.)$/i.test(baseName) ||
+        /^(?:dot|period|\.)[_\-\s](?:white|black|color|cut|stroke|gold|red|blue|vector|png|layer|jersey|font|char)/i.test(baseName)
+      ) {
+        return { type: 'letter', key: '.' };
+      }
+
       const letSpecialMatch = baseName.match(/^(?:letter|char|let|alpha|name|font|l)[_\-\s]?(ö|é|a'|k'|oe|e_acute|a_apos|a_quote|k_apos)$/i);
       if (letSpecialMatch) {
         const sm = letSpecialMatch[1].toUpperCase();
@@ -1917,6 +1929,63 @@ export const DatabaseManager: React.FC<DatabaseManagerProps> = ({
                       </div>
                     );
                   })}
+                </div>
+              </div>
+
+              {/* Dedicated Dot (.) PNG Asset Upload Section */}
+              <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center space-x-2">
+                      <ImageIcon className="w-4 h-4" />
+                      <span>Upload Dot / Period Asset ( . ) to Cloudflare R2</span>
+                    </h3>
+                    <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                      Used automatically for initials & dots in jersey names (e.g., C.RONALDO, R.SHOFIK, SS.SOJIB).
+                    </p>
+                  </div>
+
+                  <div className="flex items-center space-x-3 bg-zinc-900/70 px-3 py-2 rounded-lg border border-zinc-800">
+                    <div className="flex flex-col items-center justify-center w-12 h-12 rounded bg-zinc-950 border border-zinc-800 p-1.5 relative">
+                      <span className="absolute -top-1.5 -left-1.5 text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 rounded">
+                        .
+                      </span>
+                      {uploadingAssetKey === 'let-.' ? (
+                        <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+                      ) : editingPreset.letterAssets?.['.'] ? (
+                        <img
+                          src={editingPreset.letterAssets['.']}
+                          alt="Dot Asset (.)"
+                          className="max-h-8 max-w-full object-contain filter drop-shadow"
+                        />
+                      ) : (
+                        <span className="text-zinc-500 font-mono text-lg font-black leading-none">.</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <label className="cursor-pointer px-3 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-[11px] font-bold uppercase tracking-wider rounded border border-amber-500/40 transition-all">
+                        {editingPreset.letterAssets?.['.'] ? 'Edit Dot PNG' : '+ Upload Dot PNG'}
+                        <input
+                          type="file"
+                          accept="image/png,image/svg+xml,image/webp,image/jpeg"
+                          onChange={(e) => handleLetterAssetUpload('.', e)}
+                          className="hidden"
+                        />
+                      </label>
+                      {editingPreset.letterAssets?.['.'] && (
+                        <button
+                          type="button"
+                          onClick={() => handleClearLetterAsset('.')}
+                          className="px-2 py-1.5 bg-zinc-900 hover:bg-red-950/50 text-zinc-400 hover:text-red-400 text-[11px] font-bold uppercase rounded border border-zinc-800 flex items-center space-x-1"
+                          title="Remove dot asset"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>Clear</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 

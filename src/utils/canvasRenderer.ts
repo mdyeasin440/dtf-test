@@ -1,23 +1,16 @@
 import { CanvasItem, LayoutSettings } from '../types';
-import { getCachedAssetAspectRatio, registerAssetAspectRatio } from './textMeasurement';
+import {
+  computeCurvedTextLayout,
+  CurvedGlyphExtent,
+  getCachedAssetAspectRatio,
+  getDefaultLetterRatio,
+  isPresetCurved,
+  registerAssetAspectRatio,
+  tokenizeNameCharacters,
+} from './textMeasurement';
+import { DOT_HEIGHT_RATIO } from './letterAssetHelper';
 
-// Tokenize customer names into character tokens including multi-char tokens like "A'" or "K'"
-export function tokenizeNameCharacters(text: string): string[] {
-  const upper = text.toUpperCase();
-  const tokens: string[] = [];
-  let i = 0;
-  while (i < upper.length) {
-    if ((upper[i] === 'A' || upper[i] === 'a' || upper[i] === 'K' || upper[i] === 'k') && (upper[i + 1] === "'" || upper[i + 1] === '’' || upper[i + 1] === '`')) {
-      const tok = upper[i] === 'A' || upper[i] === 'a' ? "A'" : "A'";
-      tokens.push(tok);
-      i += 2;
-      continue;
-    }
-    tokens.push(upper[i]);
-    i++;
-  }
-  return tokens;
-}
+export { tokenizeNameCharacters };
 
 export function renderItemToCanvas(
   ctx: CanvasRenderingContext2D,
@@ -139,7 +132,7 @@ export function renderItemToCanvas(
 
   // Render text content
   if (item.itemType === 'name') {
-    renderNameText(ctx, item.customerName, preset, itemWPx, itemHPx, scale);
+    renderNameText(ctx, item.customerName, preset, itemWPx, itemHPx, scale, item.letterCapHeightInches);
   } else if (item.itemType === 'number') {
     renderNumberText(ctx, item.number, preset, itemWPx, itemHPx, scale);
   }
@@ -175,7 +168,8 @@ function renderNameText(
   preset: any,
   wPx: number,
   hPx: number,
-  scale: number
+  scale: number,
+  letterCapHeightInches?: number
 ) {
   if (!text) return;
 
@@ -196,117 +190,120 @@ function renderNameText(
   const userSpacing = typeof preset.letterSpacing === 'number' ? preset.letterSpacing : 3;
   const letterGapPx = Math.max(2, userSpacing * (scale / 30));
 
-  const isCurved = Boolean(preset.curvedTextArch || preset.enableArcPath || preset.textEffect === 'arc');
-  const arcDegrees = typeof preset.arcCurvature === 'number' ? preset.arcCurvature : (typeof preset.arcAmount === 'number' ? preset.arcAmount : 24);
+  const isCurved = isPresetCurved(preset);
+  const arcDegrees =
+    typeof preset.arcCurvature === 'number'
+      ? preset.arcCurvature
+      : typeof preset.arcAmount === 'number'
+      ? preset.arcAmount
+      : 24;
+
+  // True cap height for curved text so arch expansion never blows up letter size
+  const effectiveCapHeightPx =
+    typeof letterCapHeightInches === 'number' && letterCapHeightInches > 0
+      ? letterCapHeightInches * scale
+      : isCurved
+      ? Math.min(hPx * 0.72, (preset.defaultNameHeightInches || 2.2) * scale)
+      : hPx;
 
   if (hasLetterAssets) {
-    const spaceWidthPx = hPx * 0.20;
+    const refH = isCurved && chars.length > 1 ? effectiveCapHeightPx : hPx;
+    const spaceWidthPx = refH * 0.22;
     const charWidths: number[] = [];
-    let rawTotalW = 0;
 
-    chars.forEach((c, i) => {
+    chars.forEach((c) => {
       if (c === ' ') {
         charWidths.push(spaceWidthPx);
-        rawTotalW += spaceWidthPx;
       } else {
         const url = letterAssets[c];
+        const effectiveCharH = c === '.' && url ? refH * DOT_HEIGHT_RATIO : refH;
         const img = url ? getLoadedImage(url) : null;
         let cW = 0;
-        if (img && img.naturalWidth && img.naturalHeight) {
-          cW = hPx * (img.naturalWidth / img.naturalHeight);
+        if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+          cW = effectiveCharH * (img.naturalWidth / img.naturalHeight);
         } else {
           const cachedRatio = url ? getCachedAssetAspectRatio(url) : null;
           if (cachedRatio) {
-            cW = hPx * cachedRatio;
+            cW = effectiveCharH * cachedRatio;
           } else {
-            const defaultRatio = c === 'I' || c === "'" ? 0.18 : c === 'W' || c === 'M' ? 0.52 : c === "A'" || c === "K'" ? 0.58 : c === 'J' || c === 'L' ? 0.30 : 0.35;
-            cW = hPx * defaultRatio;
+            cW = refH * getDefaultLetterRatio(c);
           }
         }
         charWidths.push(cW);
-        rawTotalW += cW + (i < chars.length - 1 ? letterGapPx : 0);
       }
     });
-
-    const scaleX = rawTotalW > 0 ? (wPx / rawTotalW) : 1.0;
-    const actualTotalW = rawTotalW * scaleX;
-    const startX = Math.max(0, (wPx - actualTotalW) / 2);
 
     ctx.save();
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
     if (isCurved && chars.length > 1) {
-      const arcRad = (Math.max(10, Math.min(60, arcDegrees)) * Math.PI) / 180;
-      const radius = Math.max(wPx * 0.75, (actualTotalW || wPx) / (2 * Math.sin(arcRad / 2 || 0.2)));
-      const sagitta = radius * (1 - Math.cos(arcRad / 2));
-      const charH = hPx * 0.85;
-      const y0 = Math.max(charH / 2, (hPx - (charH + sagitta)) / 2 + charH / 2);
-      const centerX = wPx / 2;
-      const centerY = y0 + radius;
-
-      // Calculate character midpoints along the arc
-      let accumW = 0;
-      const charMidpoints: number[] = [];
-      chars.forEach((_, i) => {
-        const cW = charWidths[i] * scaleX;
-        const mid = accumW + cW / 2;
-        charMidpoints.push(mid);
-        accumW += cW + (i < chars.length - 1 ? letterGapPx * scaleX : 0);
+      const layout = computeCurvedTextLayout({
+        tokens: chars,
+        charWidthsPx: charWidths,
+        letterGapPx,
+        glyphHeightPx: refH,
+        arcDegrees,
+        strokeWidthPx: 0,
+        padPx: Math.max(1, 0.04 * scale),
       });
-      const totalArcLength = Math.max(1, accumW);
 
-      chars.forEach((c, idx) => {
-        const cW = charWidths[idx] * scaleX;
-        const progress = charMidpoints[idx] / totalArcLength; // 0 to 1
-        const angle = -arcRad / 2 + progress * arcRad;
+      const fitScaleX = wPx / layout.boxWidthPx;
+      const fitScaleY = hPx / layout.boxHeightPx;
 
+      ctx.scale(fitScaleX, fitScaleY);
+
+      layout.glyphs.forEach((g) => {
+        if (g.token === ' ') return;
         ctx.save();
-        ctx.translate(
-          centerX + radius * Math.sin(angle),
-          centerY - radius * Math.cos(angle)
-        );
-        ctx.rotate(angle);
+        ctx.translate(g.cx, g.cy);
+        ctx.rotate(g.angleRad);
 
-        if (c !== ' ') {
-          const url = letterAssets[c];
-          if (url) {
-            const img = getLoadedImage(url);
-            if (img && img.complete && img.naturalWidth > 0) {
-              ctx.drawImage(img, -cW / 2, -charH / 2, cW, charH);
-            } else {
-              ctx.fillStyle = textColor;
-              ctx.font = `700 ${charH}px "${fontName}", sans-serif`;
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              ctx.fillText(c, 0, 0);
-            }
+        const url = letterAssets[g.token];
+        const img = url ? getLoadedImage(url) : null;
+        if (img && img.complete && img.naturalWidth > 0) {
+          if (g.token === '.') {
+            const dotH = refH * DOT_HEIGHT_RATIO;
+            ctx.drawImage(img, -g.charWidthPx / 2, refH / 2 - dotH, g.charWidthPx, dotH);
           } else {
-            ctx.fillStyle = textColor;
-            ctx.font = `700 ${charH}px "${fontName}", sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(c, 0, 0);
+            ctx.drawImage(img, -g.charWidthPx / 2, -refH / 2, g.charWidthPx, refH);
           }
+        } else {
+          ctx.fillStyle = textColor;
+          ctx.font = `700 ${refH * 0.9}px "${fontName}", sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(g.token, 0, 0);
         }
         ctx.restore();
       });
     } else {
+      let rawTotalW = 0;
+      charWidths.forEach((w, i) => {
+        rawTotalW += w;
+        if (i < charWidths.length - 1 && chars[i] !== ' ' && chars[i + 1] !== ' ') {
+          rawTotalW += letterGapPx;
+        } else if (i < charWidths.length - 1 && (chars[i] === ' ' || chars[i + 1] === ' ')) {
+          rawTotalW += letterGapPx * 0.25;
+        }
+      });
+
+      const scaleX = rawTotalW > 0 ? wPx / rawTotalW : 1.0;
+      const actualTotalW = rawTotalW * scaleX;
+      const startX = Math.max(0, (wPx - actualTotalW) / 2);
+
       let curX = startX;
       chars.forEach((c, i) => {
         const cW = charWidths[i] * scaleX;
         if (c !== ' ') {
           const url = letterAssets[c];
-          if (url) {
-            const img = getLoadedImage(url);
-            if (img && img.complete && img.naturalWidth > 0) {
-              ctx.drawImage(img, curX, (hPx - hPx) / 2, cW, hPx);
+          const img = url ? getLoadedImage(url) : null;
+          if (img && img.complete && img.naturalWidth > 0) {
+            if (c === '.') {
+              const dotH = hPx * DOT_HEIGHT_RATIO;
+              ctx.drawImage(img, curX, hPx - dotH, cW, dotH);
             } else {
-              ctx.fillStyle = textColor;
-              ctx.font = `700 ${hPx * 0.85}px "${fontName}", sans-serif`;
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              ctx.fillText(c, curX + cW / 2, hPx / 2);
+              ctx.drawImage(img, curX, 0, cW, hPx);
             }
           } else {
             ctx.fillStyle = textColor;
@@ -316,7 +313,13 @@ function renderNameText(
             ctx.fillText(c, curX + cW / 2, hPx / 2);
           }
         }
-        curX += cW + letterGapPx * scaleX;
+        const gapAfter =
+          i < chars.length - 1
+            ? c === ' ' || chars[i + 1] === ' '
+              ? letterGapPx * 0.25 * scaleX
+              : letterGapPx * scaleX
+            : 0;
+        curX += cW + gapAfter;
       });
     }
 
@@ -331,78 +334,81 @@ function renderNameText(
   if ('textRendering' in ctx) {
     (ctx as any).textRendering = 'geometricPrecision';
   }
-  if ('letterSpacing' in ctx) {
-    (ctx as any).letterSpacing = `${letterGapPx}px`;
-  }
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
   const fontRatio = 0.95; // Exact physical cap-height fit
-  const fontSize = hPx * fontRatio;
+  const fontSize = (isCurved && text.length > 1 ? effectiveCapHeightPx : hPx) * fontRatio;
   ctx.font = `700 ${fontSize}px "${fontName}", "Bebas Neue", "Oswald", sans-serif`;
 
   const centerX = wPx / 2;
   const centerY = hPx / 2;
 
   if (isCurved && text.length > 1) {
-    const arcRad = (Math.max(10, Math.min(60, arcDegrees)) * Math.PI) / 180;
-    const chars = text.split('');
-    
-    // Measure individual char widths for proportional non-distorted arc spacing
+    if ('letterSpacing' in ctx) {
+      (ctx as any).letterSpacing = '0px';
+    }
+    const rawChars = text.split('');
     const charWidths: number[] = [];
-    let totalCharsW = 0;
-    chars.forEach((char, idx) => {
-      const w = ctx.measureText(char).width || fontSize * 0.5;
-      charWidths.push(w);
-      totalCharsW += w + (idx < chars.length - 1 ? letterGapPx : 0);
+    const glyphExtents: CurvedGlyphExtent[] = [];
+
+    rawChars.forEach((char) => {
+      if (char === ' ') {
+        const spW = fontSize * 0.28;
+        charWidths.push(spW);
+        glyphExtents.push({
+          leftPx: spW / 2,
+          rightPx: spW / 2,
+          topPx: fontSize * 0.48,
+          bottomPx: fontSize * 0.48,
+        });
+        return;
+      }
+      const m = ctx.measureText(char);
+      const advW = m.width || fontSize * 0.5;
+      const leftPx = Math.max(advW / 2, m.actualBoundingBoxLeft || advW / 2);
+      const rightPx = Math.max(advW / 2, m.actualBoundingBoxRight || advW / 2);
+      const topPx = Math.max(fontSize * 0.5, m.actualBoundingBoxAscent || fontSize * 0.5);
+      const bottomPx = Math.max(fontSize * 0.5, m.actualBoundingBoxDescent || fontSize * 0.5);
+      charWidths.push(Math.max(advW, leftPx + rightPx));
+      glyphExtents.push({ leftPx, rightPx, topPx, bottomPx });
     });
 
-    const scaleX = totalCharsW > 0 ? Math.min(1.0, wPx / totalCharsW) : 1.0;
-    const scaledTotalW = totalCharsW * scaleX;
-
-    const radius = Math.max(wPx * 0.70, (scaledTotalW || wPx) / (2 * Math.sin(arcRad / 2 || 0.2)));
-    const sagitta = radius * (1 - Math.cos(arcRad / 2));
-    const effectiveFontSize = fontSize * scaleX * 0.92;
-    ctx.font = `700 ${effectiveFontSize}px "${fontName}", "Bebas Neue", "Oswald", sans-serif`;
-
-    const y0 = Math.max(effectiveFontSize / 2, (hPx - (effectiveFontSize + sagitta)) / 2 + effectiveFontSize / 2);
-    const arcCenterY = y0 + radius;
-
-    // Calculate proportional midpoints along arc
-    let accumW = 0;
-    const charMidpoints: number[] = [];
-    chars.forEach((_, i) => {
-      const cW = charWidths[i] * scaleX;
-      const mid = accumW + cW / 2;
-      charMidpoints.push(mid);
-      accumW += cW + (i < chars.length - 1 ? letterGapPx * scaleX : 0);
+    const layout = computeCurvedTextLayout({
+      tokens: rawChars,
+      charWidthsPx: charWidths,
+      glyphExtentsPx: glyphExtents,
+      letterGapPx,
+      glyphHeightPx: fontSize,
+      arcDegrees,
+      strokeWidthPx,
+      padPx: Math.max(1, 0.04 * scale),
     });
-    const totalArcLen = Math.max(1, accumW);
 
-    chars.forEach((char, idx) => {
-      const progress = charMidpoints[idx] / totalArcLen; // 0 to 1
-      const angle = -arcRad / 2 + progress * arcRad;
+    const fitScaleX = wPx / layout.boxWidthPx;
+    const fitScaleY = hPx / layout.boxHeightPx;
+    ctx.scale(fitScaleX, fitScaleY);
+
+    layout.glyphs.forEach((g) => {
+      if (g.token === ' ') return;
 
       ctx.save();
-      ctx.translate(
-        centerX + radius * Math.sin(angle),
-        arcCenterY - radius * Math.cos(angle)
-      );
-      ctx.rotate(angle);
+      ctx.translate(g.cx, g.cy);
+      ctx.rotate(g.angleRad);
 
       // 1. Draw Fill FIRST (preserves inner stencil gaps and cutouts)
       ctx.fillStyle = textColor;
-      ctx.fillText(char, 0, 0);
+      ctx.fillText(g.token, 0, 0);
 
       // 2. Optional Inner Outline Accent
       if (preset.hasInnerOutline && preset.innerOutlineColor) {
         ctx.save();
         ctx.strokeStyle = preset.innerOutlineColor;
-        ctx.lineWidth = Math.min(strokeWidthPx * 0.4, effectiveFontSize * 0.02);
+        ctx.lineWidth = Math.min(strokeWidthPx * 0.4, fontSize * 0.02);
         ctx.lineJoin = 'miter';
         ctx.miterLimit = 2;
-        ctx.strokeText(char, 0, 0);
+        ctx.strokeText(g.token, 0, 0);
         ctx.restore();
       }
 
@@ -414,18 +420,20 @@ function renderNameText(
         ctx.lineWidth = strokeWidthPx * 2;
         ctx.lineJoin = 'miter';
         ctx.miterLimit = 2;
-        ctx.strokeText(char, 0, 0);
+        ctx.strokeText(g.token, 0, 0);
         ctx.restore();
       }
 
       ctx.restore();
     });
   } else {
+    if ('letterSpacing' in ctx) {
+      (ctx as any).letterSpacing = `${letterGapPx}px`;
+    }
     // Straight text - Exact Adobe Illustrator envelope scaling
     const metrics = ctx.measureText(text);
     const measuredW = metrics.width || 1;
-    // Scale text precisely to match physical box bounds without forced artificial compression
-    const scaleX = measuredW > 0 ? (wPx / measuredW) : 1.0;
+    const scaleX = measuredW > 0 ? wPx / measuredW : 1.0;
 
     ctx.save();
     ctx.translate(centerX, centerY);
@@ -482,7 +490,7 @@ function notifyImageLoaded() {
   });
 }
 
-function getLoadedImage(url: string): HTMLImageElement | null {
+export function getLoadedImage(url: string): HTMLImageElement | null {
   if (!url) return null;
 
   if (imageCache.has(url)) {
@@ -774,12 +782,22 @@ export async function generateHighResDtfCanvas(
   await preloadCanvasAssets(items);
 
   const rollWidthInches = settings.rollWidthInches || 39.0;
-  // Calculate max height from items inside or active on sheet
+  // Calculate max height from rotated AABB of all items inside active sheet
   let maxY = 12.0;
   items.forEach((it) => {
-    const isRot = it.rotation === 90 || it.rotation === 270;
-    const h = isRot ? it.width : it.height;
-    if (it.y + h > maxY) maxY = it.y + h;
+    const rad = ((it.rotation || 0) * Math.PI) / 180;
+    const cos = Math.abs(Math.cos(rad));
+    const sin = Math.abs(Math.sin(rad));
+    const aabbW = it.width * cos + it.height * sin;
+    const aabbH = it.width * sin + it.height * cos;
+    const cx = it.x + it.width / 2;
+    const cy = it.y + it.height / 2;
+    const leftX = cx - aabbW / 2;
+    const rightX = cx + aabbW / 2;
+    if (rightX > 0 && leftX < rollWidthInches + 5) {
+      const bottomY = cy + aabbH / 2;
+      if (bottomY > maxY) maxY = bottomY;
+    }
   });
 
   const totalHeightInches = maxY + (settings.marginInches || 0.35);
@@ -809,8 +827,13 @@ export async function generateHighResDtfCanvas(
     const end = Math.min(items.length, i + CHUNK_SIZE);
     for (let j = i; j < end; j++) {
       const item = items[j];
-      // Only render items positioned inside printable active area (x >= -5)
-      if (item.x + item.width > 0 && item.x < rollWidthInches + 5) {
+      const rad = ((item.rotation || 0) * Math.PI) / 180;
+      const cos = Math.abs(Math.cos(rad));
+      const sin = Math.abs(Math.sin(rad));
+      const aabbW = item.width * cos + item.height * sin;
+      const cx = item.x + item.width / 2;
+      // Only render items positioned inside printable active area
+      if (cx + aabbW / 2 > 0 && cx - aabbW / 2 < rollWidthInches + 5) {
         renderItemToCanvas(ctx, item, scale, {
           showCutLines: false, // EXCLUDE cut lines and guide lines from production print export
           isSelected: false,
@@ -838,10 +861,12 @@ export async function generateIndividualItemPngBlob(
   targetDpi: number = 300
 ): Promise<{ blob: Blob; filename: string }> {
   const rotationDeg = item.rotation || 0;
-  const isRotated = rotationDeg === 90 || rotationDeg === 270;
+  const rad = (rotationDeg * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(rad));
+  const sin = Math.abs(Math.sin(rad));
 
-  const wInches = isRotated ? item.height : item.width;
-  const hInches = isRotated ? item.width : item.height;
+  const wInches = item.width * cos + item.height * sin;
+  const hInches = item.width * sin + item.height * cos;
 
   const canvasWidthPx = Math.max(10, Math.round(wInches * targetDpi));
   const canvasHeightPx = Math.max(10, Math.round(hInches * targetDpi));
@@ -855,11 +880,11 @@ export async function generateIndividualItemPngBlob(
 
   ctx.clearRect(0, 0, canvasWidthPx, canvasHeightPx);
 
-  // Render item centered at (0,0) offset
+  // Center item inside its rotated AABB canvas
   const tempItem: CanvasItem = {
     ...item,
-    x: 0,
-    y: 0,
+    x: (wInches - item.width) / 2,
+    y: (hInches - item.height) / 2,
   };
 
   renderItemToCanvas(ctx, tempItem, targetDpi, {

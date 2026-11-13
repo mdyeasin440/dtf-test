@@ -91,6 +91,12 @@ export interface CanvasItem {
   parentNumber?: string;
   isSplitDigit?: boolean;
   digitIndex?: number;
+  letterCapHeightInches?: number; // True letter cap height before curved-arch bbox expansion
+  isSplitNamePart?: boolean;
+  parentName?: string;
+  partIndex?: number;
+  interlockGroupId?: string;
+  interlockRole?: 'primary' | 'inverted';
 }
 
 export type NestingStrategy = 'compact' | 'grouped_by_order' | 'rotated_max_density';
@@ -112,7 +118,15 @@ export interface DigitSplitLogEntry {
   orderId: string;
   customerName: string;
   originalNumber: string;
-  reason: 'gap_optimization' | 'shelf_end_fill' | 'smart_pocket_fill' | 'manual_unbundle';
+  reason:
+    | 'gap_optimization'
+    | 'shelf_end_fill'
+    | 'smart_pocket_fill'
+    | 'manual_unbundle'
+    | 'smart_name_split'
+    | 'manual_name_ungroup'
+    | 'interlock_7_pair';
+  entryType?: 'number' | 'name' | 'interlock';
   digits: DigitSplitLocation[];
   spaceSavedInches: number;
   timestamp: string;

@@ -3,6 +3,8 @@
  * Provides sample A-Z SVG Data URLs and image handling for DTF name letter assets
  */
 
+export const DOT_HEIGHT_RATIO = 0.25;
+
 export function createSampleLetterSvgDataUrl(
   letter: string,
   fontFamily: string = 'Oswald',
@@ -10,6 +12,16 @@ export function createSampleLetterSvgDataUrl(
   strokeColor: string = '#000000',
   strokeWidth: number = 8
 ): string {
+  if (letter === '.') {
+    const size = 64;
+    const r = 22;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+      <rect width="100%" height="100%" fill="none"/>
+      <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="${Math.max(2, strokeWidth * 0.6)}"/>
+    </svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  }
+
   const upper = letter.toUpperCase();
   let width = 160;
   if (['I', "'"].includes(upper)) width = 75;
@@ -45,5 +57,6 @@ export function generateSampleLetterAssets(
     const char = ALL_LETTER_KEYS[i];
     assets[char] = createSampleLetterSvgDataUrl(char, fontFamily, fillColor, strokeColor, 8);
   }
+  assets['.'] = createSampleLetterSvgDataUrl('.', fontFamily, fillColor, strokeColor, 8);
   return assets;
 }

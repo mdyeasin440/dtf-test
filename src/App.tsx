@@ -4,7 +4,7 @@ import { DatabaseManager } from './components/DatabaseManager';
 import { BulkInputSection } from './components/BulkInputSection';
 import { CanvasEngine } from './components/CanvasEngine';
 import { ExportModal } from './components/ExportModal';
-import { CanvasItem, DesignPreset, LayoutSettings, OrderItem, RollMetrics } from './types';
+import { CanvasItem, DesignPreset, DigitSplitLogEntry, LayoutSettings, OrderItem, RollMetrics } from './types';
 import { generateAutoNestingLayout, parseBulkInput } from './utils/nestingEngine';
 import { getLocalPresets, saveLocalPresets, fetchPresetsFromD1, saveOrdersToD1 } from './utils/d1Api';
 
@@ -101,6 +101,8 @@ export default function App() {
     } catch (_) {}
     return [];
   });
+
+  const [modificationLogs, setModificationLogs] = useState<DigitSplitLogEntry[]>([]);
 
   // 7. Metrics Persistence
   const [metrics, setMetrics] = useState<RollMetrics>(() => {
@@ -218,6 +220,7 @@ export default function App() {
         const result = generateAutoNestingLayout(initialOrders, layoutSettings);
         setCanvasItems(result.items);
         setMetrics(result.metrics);
+        setModificationLogs(result.modificationLogs || []);
       }
     } else {
       // Re-link presets to existing parsed orders in case presets were updated from D1
@@ -236,10 +239,10 @@ export default function App() {
 
   // Process & Generate 39" Roll Layout
   const handleGenerateLayout = (ordersToProcess: OrderItem[]) => {
-    const presetsMap = new Map<string, DesignPreset>(presets.map((p) => [p.code.toUpperCase(), p]));
     const result = generateAutoNestingLayout(ordersToProcess, layoutSettings);
     setCanvasItems(result.items);
     setMetrics(result.metrics);
+    setModificationLogs(result.modificationLogs || []);
     setActiveTab('canvas');
 
     // Async sync orders with Cloudflare D1
@@ -279,6 +282,8 @@ export default function App() {
             metrics={metrics}
             setMetrics={setMetrics}
             orders={parsedOrders}
+            externalModificationLogs={modificationLogs}
+            setExternalModificationLogs={setModificationLogs}
           />
         )}
 

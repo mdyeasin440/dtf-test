@@ -31,11 +31,27 @@ import {
   Redo2,
   History,
   Shirt,
+  Hand,
+  CheckSquare,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  X,
 } from 'lucide-react';
 import { CanvasItem, DigitNestingMode, DigitSplitLogEntry, LayoutSettings, RollMetrics } from '../types';
-import { renderItemToCanvas, addImageLoadListener } from '../utils/canvasRenderer';
+import { renderItemToCanvas, addImageLoadListener, getLoadedImage } from '../utils/canvasRenderer';
 import { checkCollisions, generateAutoNestingLayout } from '../utils/nestingEngine';
-import { calculateTightTextDimensions } from '../utils/textMeasurement';
+import {
+  calculateTightTextDimensions,
+  computeCurvedTextLayout,
+  CurvedGlyphExtent,
+  getCachedAssetAspectRatio,
+  getDefaultLetterRatio,
+  isPresetCurved,
+  tokenizeNameCharacters,
+} from '../utils/textMeasurement';
+import { DOT_HEIGHT_RATIO } from '../utils/letterAssetHelper';
 import { ModificationTrackerPanel } from './ModificationTrackerPanel';
 
 interface CanvasEngineProps {
@@ -46,6 +62,8 @@ interface CanvasEngineProps {
   metrics: RollMetrics;
   setMetrics: (metrics: RollMetrics) => void;
   orders: any[];
+  externalModificationLogs?: DigitSplitLogEntry[];
+  setExternalModificationLogs?: React.Dispatch<React.SetStateAction<DigitSplitLogEntry[]>>;
 }
 
 function getItemBoundingBox(item: CanvasItem) {
@@ -107,9 +125,13 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   metrics,
   setMetrics,
   orders,
+  externalModificationLogs,
+  setExternalModificationLogs,
 }) => {
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
-  const [modificationLogs, setModificationLogs] = useState<DigitSplitLogEntry[]>([]);
+  const [internalModificationLogs, setInternalModificationLogs] = useState<DigitSplitLogEntry[]>([]);
+  const modificationLogs = externalModificationLogs ?? internalModificationLogs;
+  const setModificationLogs = setExternalModificationLogs ?? setInternalModificationLogs;
   const [activeSideTab, setActiveSideTab] = useState<'inspector' | 'tracker'>('inspector');
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
@@ -120,8 +142,8 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     new Map()
   );
   const [initialResizeState, setInitialResizeState] = useState<{
-    singleItem?: { id: string; x: number; y: number; width: number; height: number };
-    groupItems?: { id: string; x: number; y: number; width: number; height: number }[];
+    singleItem?: { id: string; x: number; y: number; width: number; height: number; letterCapHeightInches?: number };
+    groupItems?: { id: string; x: number; y: number; width: number; height: number; letterCapHeightInches?: number }[];
     groupBBox?: { x: number; y: number; width: number; height: number };
   } | null>(null);
 
@@ -135,8 +157,28 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   const [zoom, setZoom] = useState<number>(0.65); // Scale factor
   const [fontTick, setFontTick] = useState<number>(0);
 
+  // Mobile / Touch Editing State (Desktop mouse behavior remains unchanged)
+  const [touchMode, setTouchMode] = useState<'select' | 'pan'>('select');
+  const [mobileMultiSelect, setMobileMultiSelect] = useState<boolean>(false);
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const scrollWrapperRef = useRef<HTMLDivElement | null>(null);
+  const inspectorSectionRef = useRef<HTMLDivElement | null>(null);
+
+  // Touch & Pointer gesture tracking refs
+  const activeTouchPointersRef = useRef<Map<number, { clientX: number; clientY: number }>>(new Map());
+  const twoFingerLastCenterRef = useRef<{ x: number; y: number } | null>(null);
+  const touchTapCandidateRef = useRef<{
+    pointerId: number;
+    itemId: string;
+    wasAlreadySelected: boolean;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
+  const marqueeBaseSelectionRef = useRef<string[]>([]);
+  const activeInteractionPointerTypeRef = useRef<string>('mouse');
 
   // Initialize modification logs on mount or orders update if empty
   useEffect(() => {
@@ -208,15 +250,14 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     setHistoryIndex((prevIndex) => Math.min(prevIndex + 1, 59));
   }, [historyIndex]);
 
-  // Apply state change and record to history
+  // Apply state change and record to history outside React state updaters
   const applyCanvasItemsWithHistory = useCallback((
     updater: CanvasItem[] | ((prev: CanvasItem[]) => CanvasItem[])
   ) => {
-    setCanvasItems((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      recordHistoryState(next);
-      return next;
-    });
+    const next = typeof updater === 'function' ? updater(canvasItemsRef.current) : updater;
+    canvasItemsRef.current = next;
+    setCanvasItems(next);
+    recordHistoryState(next);
   }, [recordHistoryState, setCanvasItems]);
 
   // Undo Handler
@@ -358,6 +399,41 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   const workspaceWidthInches = rollWidthInches + PASTEBOARD_MARGIN_X * 2;
   const canvasWidthPx = Math.round(workspaceWidthInches * pixelsPerInch);
 
+  // Mobile-only initial auto-fit & horizontal scroll centering on the 39" active print sheet
+  const centerSheetHorizontally = useCallback((targetZoom: number) => {
+    const wrapper = scrollWrapperRef.current;
+    if (!wrapper) return;
+    const ppi = 20 * targetZoom;
+    const sheetLeftPx = PASTEBOARD_MARGIN_X * ppi;
+    const sheetWidthPx = rollWidthInches * ppi;
+    const availW = wrapper.clientWidth;
+    if (sheetWidthPx <= availW) {
+      // Center the 39" sheet cleanly in viewport
+      wrapper.scrollLeft = Math.max(0, sheetLeftPx - (availW - sheetWidthPx) / 2);
+    } else {
+      // Align left edge of 39" sheet cleanly with tiny margin
+      wrapper.scrollLeft = Math.max(0, sheetLeftPx - 8);
+    }
+  }, [rollWidthInches]);
+
+  const fitSheetForMobile = useCallback(() => {
+    const wrapper = scrollWrapperRef.current;
+    const availW = wrapper?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth - 32 : 360);
+    const idealZoom = parseFloat(
+      Math.max(0.32, Math.min(0.65, (availW - 12) / (rollWidthInches * 20))).toFixed(2)
+    );
+    setZoom(idealZoom);
+    requestAnimationFrame(() => {
+      setTimeout(() => centerSheetHorizontally(idealZoom), 40);
+    });
+  }, [rollWidthInches, centerSheetHorizontally]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      fitSheetForMobile();
+    }
+  }, [fitSheetForMobile]);
+
   // Detect collisions
   const collisionsMap = checkCollisions(canvasItems, layoutSettings.marginInches);
 
@@ -482,7 +558,8 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
     canvasItems.forEach((item) => {
       // Check if item is parked on the pasteboard outside 39" active printable sheet
-      const isOutside = item.x < 0 || item.x + item.width > rollWidthInches || item.y < 0;
+      const itemBBox = getItemBoundingBox(item);
+      const isOutside = itemBBox.x < 0 || itemBBox.x + itemBBox.width > rollWidthInches || itemBBox.y < 0;
 
       renderItemToCanvas(ctx, item, pixelsPerInch, {
         showCutLines: layoutSettings.showCutLines,
@@ -607,13 +684,18 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     hoveredHandle,
   ]);
 
-  // Helper to check if click/mouse hit an 8-direction handle or edge boundary path
+  // Helper to check if click/touch hit an 8-direction handle or edge boundary path
   const getHitResizeHandle = (
     clickX: number,
-    clickY: number
+    clickY: number,
+    isTouch: boolean = false
   ): { handle: ResizeHandleType; item?: CanvasItem; gBox?: any } | null => {
-    const handleHitRadius = Math.max(0.40, 12 / pixelsPerInch);
-    const edgeTolerance = Math.max(0.24, 9 / pixelsPerInch);
+    const handleHitRadius = isTouch
+      ? Math.max(0.65, 26 / pixelsPerInch)
+      : Math.max(0.40, 12 / pixelsPerInch);
+    const edgeTolerance = isTouch
+      ? Math.max(0.36, 16 / pixelsPerInch)
+      : Math.max(0.24, 9 / pixelsPerInch);
 
     if (selectedItemIds.length === 1) {
       const it = canvasItems.find((i) => i.id === selectedItemIds[0]);
@@ -753,18 +835,54 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     return null;
   };
 
-  // Handle Mouse Down & Interactive Selection / 8-Direction Resizing
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Unified Pointer Down Handler (Preserves exact mouse behavior while adding Canva-style finger touch + drag-box selection)
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    const isTouch = e.pointerType === 'touch' || e.pointerType === 'pen';
+    activeInteractionPointerTypeRef.current = e.pointerType;
+
+    if (isTouch) {
+      activeTouchPointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+
+      // Two-finger pan gesture on mobile (always pans cleanly without modifying objects)
+      if (activeTouchPointersRef.current.size >= 2) {
+        const pts = Array.from(activeTouchPointersRef.current.values());
+        twoFingerLastCenterRef.current = {
+          x: (pts[0].clientX + pts[1].clientX) / 2,
+          y: (pts[0].clientY + pts[1].clientY) / 2,
+        };
+        // Cancel any 1-finger interaction started by first finger
+        setIsDragging(false);
+        setIsResizing(false);
+        setActiveResizeHandle(null);
+        setInitialResizeState(null);
+        setSelectionBox(null);
+        setDragStartPos(null);
+        dragStartSnapshotRef.current = null;
+        touchTapCandidateRef.current = null;
+        return;
+      }
+
+      if (touchMode === 'pan') {
+        return;
+      }
+    } else {
+      // Only handle primary mouse button
+      if (e.button !== 0) return;
+    }
 
     const rect = canvas.getBoundingClientRect();
     const clickX = (e.clientX - rect.left) / pixelsPerInch - PASTEBOARD_MARGIN_X;
     const clickY = (e.clientY - rect.top) / pixelsPerInch - PASTEBOARD_MARGIN_Y;
 
-    // 1. Check if user clicked on a resize handle or edge path of an active selection
-    const hitHandle = getHitResizeHandle(clickX, clickY);
+    // 1. Check if user hit a resize handle or edge path of an active selection
+    const hitHandle = getHitResizeHandle(clickX, clickY, isTouch);
     if (hitHandle) {
+      if (typeof canvas.setPointerCapture === 'function') {
+        try { canvas.setPointerCapture(e.pointerId); } catch {}
+      }
       dragStartSnapshotRef.current = canvasItemsRef.current;
       setIsResizing(true);
       setActiveResizeHandle(hitHandle.handle);
@@ -776,6 +894,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
             y: hitHandle.item.y,
             width: hitHandle.item.width,
             height: hitHandle.item.height,
+            letterCapHeightInches: hitHandle.item.letterCapHeightInches,
           },
         });
       } else if (hitHandle.gBox) {
@@ -788,14 +907,15 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
             y: i.y,
             width: i.width,
             height: i.height,
+            letterCapHeightInches: i.letterCapHeightInches,
           })),
         });
       }
       return;
     }
 
-    // 2. Find top-most clicked item (reverse z-order)
-    const clickedItem = [...canvasItems].reverse().find((it) => {
+    // 2. Find top-most clicked/tapped item (reverse z-order), with slight finger tolerance for small objects/dots on touch
+    let clickedItem = [...canvasItems].reverse().find((it) => {
       const bbox = getItemBoundingBox(it);
       return (
         clickX >= bbox.x &&
@@ -804,6 +924,19 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         clickY <= bbox.y + bbox.height
       );
     });
+
+    if (!clickedItem && isTouch) {
+      const touchPad = Math.max(0.16, 10 / pixelsPerInch);
+      clickedItem = [...canvasItems].reverse().find((it) => {
+        const bbox = getItemBoundingBox(it);
+        return (
+          clickX >= bbox.x - touchPad &&
+          clickX <= bbox.x + bbox.width + touchPad &&
+          clickY >= bbox.y - touchPad &&
+          clickY <= bbox.y + bbox.height + touchPad
+        );
+      });
+    }
 
     // Or check if clicked inside existing multi-selection group bounding box
     const selectedList = canvasItems.filter((i) => selectedItemIds.includes(i.id));
@@ -819,13 +952,27 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       const targetItem = clickedItem || selectedList[0];
       if (targetItem?.locked) return;
 
+      if (typeof canvas.setPointerCapture === 'function') {
+        try { canvas.setPointerCapture(e.pointerId); } catch {}
+      }
+
+      const additiveMode = e.shiftKey || (isTouch && mobileMultiSelect);
+      const wasAlreadySelected = clickedItem ? selectedItemIds.includes(clickedItem.id) : false;
+
       let newSelectedIds = [...selectedItemIds];
-      if (e.shiftKey) {
+      if (additiveMode) {
         if (clickedItem) {
-          if (newSelectedIds.includes(clickedItem.id)) {
-            newSelectedIds = newSelectedIds.filter((id) => id !== clickedItem.id);
+          if (isTouch) {
+            // On touch multi-select, add immediately and remember if it was already selected so a tap (without drag) toggles it off
+            if (!newSelectedIds.includes(clickedItem.id)) {
+              newSelectedIds.push(clickedItem.id);
+            }
           } else {
-            newSelectedIds.push(clickedItem.id);
+            if (newSelectedIds.includes(clickedItem.id)) {
+              newSelectedIds = newSelectedIds.filter((id) => id !== clickedItem.id);
+            } else {
+              newSelectedIds.push(clickedItem.id);
+            }
           }
         }
       } else {
@@ -833,6 +980,18 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
           newSelectedIds = [clickedItem.id];
         }
       }
+
+      touchTapCandidateRef.current =
+        isTouch && clickedItem
+          ? {
+              pointerId: e.pointerId,
+              itemId: clickedItem.id,
+              wasAlreadySelected,
+              startX: e.clientX,
+              startY: e.clientY,
+              moved: false,
+            }
+          : null;
 
       dragStartSnapshotRef.current = canvasItemsRef.current;
       setSelectedItemIds(newSelectedIds);
@@ -847,7 +1006,12 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       });
       setInitialItemPositions(initialMap);
     } else {
-      if (!e.shiftKey) {
+      if (typeof canvas.setPointerCapture === 'function') {
+        try { canvas.setPointerCapture(e.pointerId); } catch {}
+      }
+      const keepExisting = e.shiftKey || (isTouch && mobileMultiSelect);
+      marqueeBaseSelectionRef.current = keepExisting ? [...selectedItemIds] : [];
+      if (!keepExisting) {
         setSelectedItemIds([]);
       }
       setSelectionBox({
@@ -859,17 +1023,56 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     }
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    const isTouch = e.pointerType === 'touch' || e.pointerType === 'pen';
+
+    if (isTouch) {
+      if (activeTouchPointersRef.current.has(e.pointerId)) {
+        activeTouchPointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+      }
+
+      // Two-finger pan across roll
+      if (activeTouchPointersRef.current.size >= 2) {
+        const pts = Array.from(activeTouchPointersRef.current.values());
+        const cx = (pts[0].clientX + pts[1].clientX) / 2;
+        const cy = (pts[0].clientY + pts[1].clientY) / 2;
+        if (twoFingerLastCenterRef.current) {
+          const dxPx = cx - twoFingerLastCenterRef.current.x;
+          const dyPx = cy - twoFingerLastCenterRef.current.y;
+          if (scrollWrapperRef.current) {
+            scrollWrapperRef.current.scrollLeft -= dxPx;
+          }
+          window.scrollBy(0, -dyPx);
+        }
+        twoFingerLastCenterRef.current = { x: cx, y: cy };
+        return;
+      }
+
+      if (touchMode === 'pan') {
+        return;
+      }
+
+      if (touchTapCandidateRef.current && touchTapCandidateRef.current.pointerId === e.pointerId) {
+        const dist = Math.hypot(
+          e.clientX - touchTapCandidateRef.current.startX,
+          e.clientY - touchTapCandidateRef.current.startY
+        );
+        if (dist > 6) {
+          touchTapCandidateRef.current.moved = true;
+        }
+      }
+    }
 
     const rect = canvas.getBoundingClientRect();
     const mouseX = (e.clientX - rect.left) / pixelsPerInch - PASTEBOARD_MARGIN_X;
     const mouseY = (e.clientY - rect.top) / pixelsPerInch - PASTEBOARD_MARGIN_Y;
 
-    // Update cursor icon and hover status based on edge / handle hover
-    if (!isDragging && !isResizing && !selectionBox) {
-      const hitHandle = getHitResizeHandle(mouseX, mouseY);
+    // Update cursor icon and hover status on desktop mouse
+    if (!isTouch && !isDragging && !isResizing && !selectionBox) {
+      const hitHandle = getHitResizeHandle(mouseX, mouseY, false);
       setHoveredHandle(hitHandle ? hitHandle.handle : null);
 
       if (hitHandle) {
@@ -883,14 +1086,16 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
           canvas.style.cursor = 'nesw-resize';
         }
       } else {
-        const isOverSelected = canvasItems.some(
-          (it) =>
-            selectedItemIds.includes(it.id) &&
-            mouseX >= it.x &&
-            mouseX <= it.x + it.width &&
-            mouseY >= it.y &&
-            mouseY <= it.y + it.height
-        );
+        const isOverSelected = canvasItems.some((it) => {
+          if (!selectedItemIds.includes(it.id)) return false;
+          const bbox = getItemBoundingBox(it);
+          return (
+            mouseX >= bbox.x &&
+            mouseX <= bbox.x + bbox.width &&
+            mouseY >= bbox.y &&
+            mouseY <= bbox.y + bbox.height
+          );
+        });
         canvas.style.cursor = isOverSelected ? 'move' : 'crosshair';
       }
     }
@@ -950,6 +1155,9 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                   y: parseFloat(newY.toFixed(2)),
                   width: parseFloat(newW.toFixed(2)),
                   height: parseFloat(newH.toFixed(2)),
+                  letterCapHeightInches: init.letterCapHeightInches
+                    ? parseFloat((init.letterCapHeightInches * (newH / Math.max(0.1, init.height))).toFixed(2))
+                    : it.letterCapHeightInches,
                 }
               : it
           )
@@ -1013,6 +1221,9 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
               y: parseFloat((originY + relY * scaleY).toFixed(2)),
               width: parseFloat((orig.width * scaleX).toFixed(2)),
               height: parseFloat((orig.height * scaleY).toFixed(2)),
+              letterCapHeightInches: orig.letterCapHeightInches
+                ? parseFloat((orig.letterCapHeightInches * scaleY).toFixed(2))
+                : it.letterCapHeightInches,
             };
           })
         );
@@ -1029,7 +1240,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       const minY = Math.min(updatedBox.startY, updatedBox.currentY);
       const maxY = Math.max(updatedBox.startY, updatedBox.currentY);
 
-      const highlighted = canvasItems
+      const boxHighlighted = canvasItems
         .filter((it) => {
           const bbox = getItemBoundingBox(it);
           return (
@@ -1041,8 +1252,18 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         })
         .map((it) => it.id);
 
-      setSelectedItemIds(highlighted);
+      if (marqueeBaseSelectionRef.current.length > 0) {
+        const merged = Array.from(new Set([...marqueeBaseSelectionRef.current, ...boxHighlighted]));
+        setSelectedItemIds(merged);
+      } else {
+        setSelectedItemIds(boxHighlighted);
+      }
     } else if (isDragging && dragStartPos) {
+      // Avoid tiny micro-drift on quick finger tap before user intentionally moves finger
+      if (isTouch && touchTapCandidateRef.current && !touchTapCandidateRef.current.moved) {
+        return;
+      }
+
       let dx = mouseX - dragStartPos.x;
       let dy = mouseY - dragStartPos.y;
 
@@ -1074,7 +1295,37 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     }
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const isTouch = e.pointerType === 'touch' || e.pointerType === 'pen';
+    if (isTouch) {
+      activeTouchPointersRef.current.delete(e.pointerId);
+      if (activeTouchPointersRef.current.size < 2) {
+        twoFingerLastCenterRef.current = null;
+      }
+
+      // If in mobile Multi-Select tap mode and user tapped an already-selected item without dragging, toggle it off
+      if (
+        mobileMultiSelect &&
+        touchTapCandidateRef.current &&
+        touchTapCandidateRef.current.pointerId === e.pointerId &&
+        !touchTapCandidateRef.current.moved &&
+        touchTapCandidateRef.current.wasAlreadySelected
+      ) {
+        const toggleId = touchTapCandidateRef.current.itemId;
+        setSelectedItemIds((prev) => prev.filter((id) => id !== toggleId));
+      }
+      touchTapCandidateRef.current = null;
+    }
+
+    const canvas = canvasRef.current;
+    if (canvas && typeof canvas.releasePointerCapture === 'function') {
+      try {
+        if (canvas.hasPointerCapture?.(e.pointerId)) {
+          canvas.releasePointerCapture(e.pointerId);
+        }
+      } catch {}
+    }
+
     if (isDragging || isResizing) {
       if (dragStartSnapshotRef.current) {
         const startJson = JSON.stringify(dragStartSnapshotRef.current);
@@ -1089,6 +1340,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     setActiveResizeHandle(null);
     setInitialResizeState(null);
     setSelectionBox(null);
+    marqueeBaseSelectionRef.current = [];
     setDragStartPos(null);
     dragStartSnapshotRef.current = null;
   };
@@ -1211,11 +1463,52 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     );
   };
 
-  // Merge from a specific Modification Log Entry
+  // Merge from a specific Modification Log Entry (supports both numbers & names)
   const handleMergeFromLog = (logEntry: DigitSplitLogEntry) => {
     const digitIds = logEntry.digits.map((d) => d.itemId);
     const selected = canvasItems.filter((i) => digitIds.includes(i.id));
     if (selected.length < 1) return;
+
+    if (logEntry.entryType === 'name') {
+      selected.sort((a, b) => {
+        const dx = Math.abs(b.x - a.x);
+        const dy = Math.abs(b.y - a.y);
+        return dx >= dy ? a.x - b.x : a.y - b.y;
+      });
+      const firstItem = selected[0];
+      const mergedNameStr = logEntry.originalNumber;
+      const origOrder = orders.find((o) => o.id === logEntry.orderId);
+      const restorePreset = origOrder?.matchedPreset || firstItem.preset;
+      const capH =
+        firstItem.letterCapHeightInches ||
+        selected.reduce((acc, s) => acc + (s.letterCapHeightInches || s.height), 0) / selected.length;
+      const tightCombined = calculateTightTextDimensions(mergedNameStr, 'name', restorePreset, capH);
+
+      const mergedItem: CanvasItem = {
+        id: `${logEntry.orderId}-name-merged-${Date.now()}`,
+        orderId: logEntry.orderId,
+        itemType: 'name',
+        customerName: mergedNameStr,
+        number: firstItem.number,
+        designCode: firstItem.designCode,
+        preset: restorePreset,
+        x: firstItem.x,
+        y: firstItem.y,
+        width: tightCombined.widthInches,
+        height: tightCombined.heightInches,
+        letterCapHeightInches: capH,
+        rotation: firstItem.rotation || 0,
+        zIndex: Math.max(...selected.map((s) => s.zIndex)),
+        locked: false,
+        garmentSize: firstItem.garmentSize,
+      };
+
+      const remainingItems = canvasItems.filter((i) => !digitIds.includes(i.id));
+      applyCanvasItemsWithHistory([...remainingItems, mergedItem]);
+      setSelectedItemIds([mergedItem.id]);
+      setModificationLogs((prev) => prev.filter((l) => l.id !== logEntry.id));
+      return;
+    }
 
     selected.sort((a, b) => a.x - b.x);
     const mergedDigitsStr = logEntry.originalNumber;
@@ -1245,6 +1538,343 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     applyCanvasItemsWithHistory([...remainingItems, mergedItem]);
     setSelectedItemIds([mergedItem.id]);
     setModificationLogs((prev) => prev.filter((l) => l.id !== logEntry.id));
+  };
+
+  // Ungroup Selected Name (straight or curved) into Independent Movable & Editable Letters
+  const handleUngroupSelectedName = (targetItem?: CanvasItem) => {
+    const targetIds = targetItem ? [targetItem.id] : selectedItemIds;
+    if (targetIds.length === 0) return;
+
+    let didUngroupAny = false;
+    const newItemsList: CanvasItem[] = [];
+    const newSelectedIds: string[] = [];
+    const createdLogs: DigitSplitLogEntry[] = [];
+
+    canvasItems.forEach((it) => {
+      const tokens = it.itemType === 'name' ? tokenizeNameCharacters(it.customerName || '') : [];
+      const nonSpaceCount = tokens.filter((t) => t !== ' ').length;
+
+      if (targetIds.includes(it.id) && it.itemType === 'name' && nonSpaceCount > 1) {
+        didUngroupAny = true;
+        const isCurved = isPresetCurved(it.preset);
+        const capH =
+          it.letterCapHeightInches ||
+          (isCurved ? Math.min(it.height * 0.72, it.preset?.defaultNameHeightInches || 2.2) : it.height);
+
+        const straightLetterPreset = {
+          ...it.preset,
+          curvedTextArch: false,
+          enableArcPath: false,
+          textEffect: it.preset?.textEffect === 'arc' ? 'none' : it.preset?.textEffect,
+        };
+
+        const cx0 = it.x + it.width / 2;
+        const cy0 = it.y + it.height / 2;
+        const itemRad = ((it.rotation || 0) * Math.PI) / 180;
+        const cosItem = Math.cos(itemRad);
+        const sinItem = Math.sin(itemRad);
+
+        const splitLocs: DigitSplitLogEntry['digits'] = [];
+
+        if (isCurved) {
+          const scaleDpi = 300;
+          const hPx = capH * scaleDpi;
+          const letterAssets = it.preset?.letterAssets || {};
+          const hasLetterAssets = tokens.some((c) => c !== ' ' && Boolean(letterAssets[c]));
+          const userSpacing = typeof it.preset?.letterSpacing === 'number' ? it.preset.letterSpacing : 3;
+          const letterGapPx = Math.max(2, userSpacing * (scaleDpi / 30));
+          const arcDeg =
+            typeof it.preset?.arcCurvature === 'number'
+              ? it.preset.arcCurvature
+              : typeof it.preset?.arcAmount === 'number'
+              ? it.preset.arcAmount
+              : 24;
+
+          const charWidthsPx: number[] = [];
+          const glyphExtentsPx: CurvedGlyphExtent[] = [];
+          let calcTokens = tokens;
+
+          if (hasLetterAssets) {
+            tokens.forEach((c) => {
+              if (c === ' ') {
+                charWidthsPx.push(hPx * 0.22);
+              } else {
+                const url = letterAssets[c];
+                const effectiveCharH = c === '.' && url ? hPx * DOT_HEIGHT_RATIO : hPx;
+                const img = url ? getLoadedImage(url) : null;
+                let w = hPx * getDefaultLetterRatio(c);
+                if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+                  w = effectiveCharH * (img.naturalWidth / img.naturalHeight);
+                } else {
+                  const cached = url ? getCachedAssetAspectRatio(url) : null;
+                  if (cached) w = effectiveCharH * cached;
+                }
+                charWidthsPx.push(w);
+              }
+            });
+          } else {
+            calcTokens = it.customerName.toUpperCase().split('');
+            const measCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+            const mCtx = measCanvas?.getContext('2d');
+            const fontSize = hPx * 0.95;
+            if (mCtx) {
+              mCtx.font = `700 ${fontSize}px "${it.preset?.fontFamily || 'Oswald'}", "Bebas Neue", "Oswald", sans-serif`;
+              mCtx.textAlign = 'center';
+              mCtx.textBaseline = 'middle';
+            }
+            calcTokens.forEach((ch) => {
+              if (ch === ' ') {
+                const spW = fontSize * 0.28;
+                charWidthsPx.push(spW);
+                glyphExtentsPx.push({ leftPx: spW / 2, rightPx: spW / 2, topPx: fontSize * 0.48, bottomPx: fontSize * 0.48 });
+                return;
+              }
+              if (mCtx) {
+                const m = mCtx.measureText(ch);
+                const advW = m.width || fontSize * 0.5;
+                const leftPx = Math.max(advW / 2, m.actualBoundingBoxLeft || advW / 2);
+                const rightPx = Math.max(advW / 2, m.actualBoundingBoxRight || advW / 2);
+                const topPx = Math.max(fontSize * 0.5, m.actualBoundingBoxAscent || fontSize * 0.5);
+                const bottomPx = Math.max(fontSize * 0.5, m.actualBoundingBoxDescent || fontSize * 0.5);
+                charWidthsPx.push(Math.max(advW, leftPx + rightPx));
+                glyphExtentsPx.push({ leftPx, rightPx, topPx, bottomPx });
+              } else {
+                const w = fontSize * getDefaultLetterRatio(ch);
+                charWidthsPx.push(w);
+                glyphExtentsPx.push({ leftPx: w / 2, rightPx: w / 2, topPx: fontSize * 0.5, bottomPx: fontSize * 0.5 });
+              }
+            });
+          }
+
+          const rawStrokePx =
+            !hasLetterAssets && typeof it.preset?.strokeWidth === 'number' && it.preset.strokeWidth > 0
+              ? it.preset.strokeWidth * (scaleDpi / 30)
+              : 0;
+          const layout = computeCurvedTextLayout({
+            tokens: calcTokens,
+            charWidthsPx,
+            glyphExtentsPx: glyphExtentsPx.length > 0 ? glyphExtentsPx : undefined,
+            letterGapPx,
+            glyphHeightPx: hasLetterAssets ? hPx : hPx * 0.95,
+            arcDegrees: arcDeg,
+            strokeWidthPx: rawStrokePx,
+            padPx: 0.04 * scaleDpi,
+          });
+
+          const boxWIn = layout.boxWidthPx / scaleDpi;
+          const boxHIn = layout.boxHeightPx / scaleDpi;
+          const fitScaleX = it.width / boxWIn;
+          const fitScaleY = it.height / boxHIn;
+          const letterH = parseFloat((capH * fitScaleY).toFixed(2));
+
+          layout.glyphs.forEach((g, idx) => {
+            if (g.token === ' ') return;
+            const isDotPng = g.token === '.' && Boolean(letterAssets['.']);
+            const itemGlyphH = isDotPng
+              ? parseFloat(Math.max(0.2, letterH * DOT_HEIGHT_RATIO).toFixed(2))
+              : letterH;
+            const baselineShiftY = isDotPng ? (letterH - itemGlyphH) / 2 : 0;
+            const localCx = (g.cx / scaleDpi) * fitScaleX - it.width / 2;
+            const localCy = (g.cy / scaleDpi) * fitScaleY - it.height / 2 + baselineShiftY;
+
+            const wx = cx0 + localCx * cosItem - localCy * sinItem;
+            const wy = cy0 + localCx * sinItem + localCy * cosItem;
+
+            const tightLetter = calculateTightTextDimensions(g.token, 'name', straightLetterPreset, letterH);
+            const letterW = parseFloat(Math.max(tightLetter.widthInches, (g.charWidthPx / scaleDpi) * fitScaleX).toFixed(2));
+            const letterAngleDeg = Math.round((((it.rotation || 0) + (g.angleRad * 180) / Math.PI) % 360 + 360) % 360);
+
+            const letterId = `${it.id}-l${idx}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+            const letterItem: CanvasItem = {
+              id: letterId,
+              orderId: it.orderId,
+              itemType: 'name',
+              customerName: g.token,
+              number: it.number,
+              designCode: it.designCode,
+              preset: straightLetterPreset,
+              x: parseFloat((wx - letterW / 2).toFixed(2)),
+              y: parseFloat((wy - itemGlyphH / 2).toFixed(2)),
+              width: letterW,
+              height: itemGlyphH,
+              letterCapHeightInches: itemGlyphH,
+              rotation: letterAngleDeg,
+              zIndex: it.zIndex + idx,
+              locked: false,
+              garmentSize: it.garmentSize,
+              isSplitNamePart: true,
+              parentName: it.parentName || it.customerName,
+              partIndex: idx,
+              customColorOverride: it.customColorOverride,
+              customStrokeOverride: it.customStrokeOverride,
+            };
+            newItemsList.push(letterItem);
+            newSelectedIds.push(letterId);
+            splitLocs.push({
+              digit: g.token,
+              itemId: letterId,
+              x: letterItem.x,
+              y: letterItem.y,
+              width: letterItem.width,
+              height: letterItem.height,
+              shelfRowIndex: 1,
+            });
+          });
+        } else {
+          // Straight Name Ungroup
+          const letterAssets = it.preset?.letterAssets || {};
+          const userSpacing = typeof it.preset?.letterSpacing === 'number' ? it.preset.letterSpacing : 3;
+          const gapIn = Math.max(0.03, userSpacing / 30);
+          const tokenDims = tokens.map((tok) =>
+            tok === ' '
+              ? { widthInches: capH * 0.24, heightInches: capH }
+              : calculateTightTextDimensions(tok, 'name', straightLetterPreset, capH)
+          );
+          const rawTotalW = tokenDims.reduce(
+            (acc, d, i) => acc + d.widthInches + (i < tokenDims.length - 1 ? gapIn : 0),
+            0
+          );
+          const scaleFactor = rawTotalW > 0 ? it.width / rawTotalW : 1.0;
+
+          let localX = 0;
+          tokens.forEach((tok, idx) => {
+            const slotW = tokenDims[idx].widthInches * scaleFactor;
+            if (tok !== ' ') {
+              const isDotPng = tok === '.' && Boolean(letterAssets['.']);
+              const fullH = parseFloat(it.height.toFixed(2));
+              const letterH = isDotPng
+                ? parseFloat(Math.max(0.2, it.height * DOT_HEIGHT_RATIO).toFixed(2))
+                : fullH;
+              const localCx = localX + slotW / 2 - it.width / 2;
+              const localCy = isDotPng ? (fullH - letterH) / 2 : 0;
+              const wx = cx0 + localCx * cosItem - localCy * sinItem;
+              const wy = cy0 + localCx * sinItem + localCy * cosItem;
+
+              const letterW = parseFloat(Math.max(0.2, slotW).toFixed(2));
+              const letterId = `${it.id}-l${idx}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+
+              const letterItem: CanvasItem = {
+                id: letterId,
+                orderId: it.orderId,
+                itemType: 'name',
+                customerName: tok,
+                number: it.number,
+                designCode: it.designCode,
+                preset: straightLetterPreset,
+                x: parseFloat((wx - letterW / 2).toFixed(2)),
+                y: parseFloat((wy - letterH / 2).toFixed(2)),
+                width: letterW,
+                height: letterH,
+                letterCapHeightInches: letterH,
+                rotation: it.rotation || 0,
+                zIndex: it.zIndex + idx,
+                locked: false,
+                garmentSize: it.garmentSize,
+                isSplitNamePart: true,
+                parentName: it.parentName || it.customerName,
+                partIndex: idx,
+                customColorOverride: it.customColorOverride,
+                customStrokeOverride: it.customStrokeOverride,
+              };
+              newItemsList.push(letterItem);
+              newSelectedIds.push(letterId);
+              splitLocs.push({
+                digit: tok,
+                itemId: letterId,
+                x: letterItem.x,
+                y: letterItem.y,
+                width: letterItem.width,
+                height: letterItem.height,
+                shelfRowIndex: 1,
+              });
+            }
+            localX += slotW + (idx < tokens.length - 1 ? gapIn * scaleFactor : 0);
+          });
+        }
+
+        createdLogs.push({
+          id: `log-name-ungrp-${it.id}-${Date.now()}`,
+          orderId: it.orderId,
+          customerName: it.parentName || it.customerName,
+          originalNumber: it.customerName,
+          reason: 'manual_name_ungroup',
+          entryType: 'name',
+          digits: splitLocs,
+          spaceSavedInches: 0,
+          timestamp: new Date().toLocaleTimeString(),
+        });
+      } else {
+        newItemsList.push(it);
+      }
+    });
+
+    if (didUngroupAny) {
+      applyCanvasItemsWithHistory(newItemsList);
+      setSelectedItemIds(newSelectedIds);
+      setModificationLogs((prev) => [...createdLogs, ...prev]);
+    }
+  };
+
+  // Merge Multiple Selected Name Letters/Parts back into One Grouped Name Item
+  const handleMergeSelectedNames = () => {
+    const selected = canvasItems.filter((i) => selectedItemIds.includes(i.id) && i.itemType === 'name');
+    if (selected.length < 2) return;
+
+    const minX = Math.min(...selected.map((s) => s.x));
+    const maxX = Math.max(...selected.map((s) => s.x + s.width));
+    const minY = Math.min(...selected.map((s) => s.y));
+    const maxY = Math.max(...selected.map((s) => s.y + s.height));
+
+    const horizontalSpan = maxX - minX;
+    const verticalSpan = maxY - minY;
+    selected.sort((a, b) => (horizontalSpan >= verticalSpan ? a.x - b.x : a.y - b.y));
+
+    const firstItem = selected[0];
+    const avgCapH =
+      selected.reduce((acc, s) => acc + (s.letterCapHeightInches || s.height), 0) / selected.length;
+
+    let mergedStr = '';
+    for (let i = 0; i < selected.length; i++) {
+      const cur = selected[i];
+      if (i > 0) {
+        const prev = selected[i - 1];
+        const gap = horizontalSpan >= verticalSpan ? cur.x - (prev.x + prev.width) : cur.y - (prev.y + prev.height);
+        if (gap > avgCapH * 0.35) {
+          mergedStr += ' ';
+        }
+      }
+      mergedStr += cur.customerName.trim();
+    }
+
+    const origOrder = orders.find((o) => o.id === firstItem.orderId);
+    const restorePreset = origOrder?.matchedPreset || firstItem.preset;
+    const tightCombined = calculateTightTextDimensions(mergedStr, 'name', restorePreset, avgCapH);
+
+    const mergedItem: CanvasItem = {
+      id: `${firstItem.orderId || 'ord'}-name-merged-${Date.now()}`,
+      orderId: firstItem.orderId,
+      itemType: 'name',
+      customerName: mergedStr,
+      number: firstItem.number,
+      designCode: firstItem.designCode,
+      preset: restorePreset,
+      x: firstItem.x,
+      y: firstItem.y,
+      width: tightCombined.widthInches,
+      height: tightCombined.heightInches,
+      letterCapHeightInches: parseFloat(avgCapH.toFixed(2)),
+      rotation: horizontalSpan >= verticalSpan ? 0 : 90,
+      zIndex: Math.max(...selected.map((s) => s.zIndex)),
+      locked: false,
+      garmentSize: firstItem.garmentSize,
+    };
+
+    const remainingItems = canvasItems.filter((i) => !selectedItemIds.includes(i.id));
+    applyCanvasItemsWithHistory([...remainingItems, mergedItem]);
+    setSelectedItemIds([mergedItem.id]);
+
+    const selIds = new Set(selectedItemIds);
+    setModificationLogs((prev) => prev.filter((l) => !l.digits.some((d) => selIds.has(d.itemId))));
   };
 
   // Locate and Highlight on Canvas from Modification Tracker
@@ -1578,6 +2208,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                   const result = generateAutoNestingLayout(orders, updatedSettings);
                   setCanvasItems(result.items);
                   setMetrics(result.metrics);
+                  setModificationLogs(result.modificationLogs || []);
                 }
               }}
               className="bg-zinc-950 text-white text-xs px-2.5 py-1.5 rounded border border-zinc-800 focus:outline-none font-mono"
@@ -1601,6 +2232,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                   const result = generateAutoNestingLayout(orders, updatedSettings);
                   setCanvasItems(result.items);
                   setMetrics(result.metrics);
+                  setModificationLogs(result.modificationLogs || []);
                 }
               }}
               className="bg-zinc-950 text-white text-xs px-2.5 py-1.5 rounded border border-zinc-800 focus:outline-none font-mono"
@@ -1745,7 +2377,13 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
             <ZoomIn className="w-4 h-4" />
           </button>
           <button
-            onClick={() => setZoom(0.65)}
+            onClick={() => {
+              if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                fitSheetForMobile();
+              } else {
+                setZoom(0.65);
+              }
+            }}
             className="p-1.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800"
             title="Fit Screen"
           >
@@ -1754,13 +2392,86 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         </div>
       </div>
 
+      {/* Mobile-Only Canva Touch Controls Bar (hidden on Desktop >= 1024px) */}
+      <div className="lg:hidden mb-3 bg-zinc-900/95 border border-zinc-800 rounded-xl p-2.5 shadow-lg space-y-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center bg-zinc-950 p-1 rounded-lg border border-zinc-800">
+            <button
+              type="button"
+              onClick={() => setTouchMode('select')}
+              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-[11px] font-bold uppercase tracking-wider transition-all ${
+                touchMode === 'select'
+                  ? 'bg-red-600 text-white shadow'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <MousePointer className="w-3.5 h-3.5" />
+              <span>Select &amp; Drag</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTouchMode('pan')}
+              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-[11px] font-bold uppercase tracking-wider transition-all ${
+                touchMode === 'pan'
+                  ? 'bg-amber-500 text-zinc-950 shadow'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <Hand className="w-3.5 h-3.5" />
+              <span>Scroll Sheet</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setMobileMultiSelect((v) => !v)}
+              className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold uppercase border transition-all ${
+                mobileMultiSelect
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50'
+                  : 'bg-zinc-950 text-zinc-400 border-zinc-800'
+              }`}
+              title="Tap or drag multiple times to keep adding items to selection"
+            >
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span>Multi {mobileMultiSelect ? 'ON' : 'OFF'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedItemIds(canvasItems.map((i) => i.id))}
+              className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold uppercase bg-zinc-950 text-zinc-300 border border-zinc-800 hover:border-cyan-500/40"
+            >
+              All
+            </button>
+
+            <button
+              type="button"
+              onClick={() => centerSheetHorizontally(zoom)}
+              className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold uppercase bg-zinc-950 text-zinc-300 border border-zinc-800"
+            >
+              Center 39"
+            </button>
+          </div>
+        </div>
+
+        <p className="text-[10px] font-mono text-zinc-400 leading-snug">
+          {touchMode === 'select'
+            ? 'Finger on item: tap or drag to move. Finger on empty area: drag a box to multi-select objects. Use 2 fingers anytime to scroll.'
+            : 'Scroll mode active: swipe freely with 1 finger to scroll the 39" roll.'}
+        </p>
+      </div>
+
       {/* Main Grid: Interactive Canvas + Item Inspector Side Panel */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start relative">
         {/* Canvas Area */}
-        <div className="lg:col-span-8 overflow-x-auto bg-zinc-900 p-6 rounded-xl border border-zinc-800 shadow-2xl flex flex-col items-center">
-          {/* Top Ruler Header with Pasteboard Bounds */}
+        <div
+          ref={scrollWrapperRef}
+          className="lg:col-span-8 overflow-x-auto bg-zinc-900 p-2 sm:p-4 lg:p-6 rounded-xl border border-zinc-800 shadow-2xl flex flex-col items-start lg:items-center"
+        >
+          {/* Desktop Top Ruler Header with Pasteboard Bounds */}
           <div
-            className="bg-zinc-950 border border-zinc-800 mb-2 flex items-center justify-between text-[10px] font-mono text-zinc-500 px-3 py-1.5 rounded uppercase shadow-inner"
+            className="hidden lg:flex bg-zinc-950 border border-zinc-800 mb-2 items-center justify-between text-[10px] font-mono text-zinc-500 px-3 py-1.5 rounded uppercase shadow-inner"
             style={{ width: `${canvasWidthPx}px` }}
           >
             <span className="text-amber-500/80 font-bold flex items-center space-x-1">
@@ -1778,6 +2489,18 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
             </span>
           </div>
 
+          {/* Mobile Compact Top Ruler Header */}
+          <div
+            className="flex lg:hidden bg-zinc-950 border border-zinc-800 mb-1.5 items-center justify-between text-[9px] font-mono text-zinc-500 px-2 py-1 rounded uppercase"
+            style={{ width: `${canvasWidthPx}px` }}
+          >
+            <span className="text-amber-500/70">◄ -10"</span>
+            <span className="text-red-400 font-bold">0" EDGE</span>
+            <span className="text-zinc-300 font-bold">39" PRINT SHEET</span>
+            <span className="text-red-400 font-bold">39" EDGE</span>
+            <span className="text-amber-500/70">+10" ►</span>
+          </div>
+
           <div
             ref={containerRef}
             className="relative border-2 border-zinc-800 rounded overflow-hidden shadow-2xl bg-[#141418]"
@@ -1785,14 +2508,128 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
           >
             <canvas
               ref={canvasRef}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              className="block"
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              style={{
+                touchAction: touchMode === 'pan' ? 'pan-x pan-y' : 'none',
+              }}
+              className="block select-none"
             />
           </div>
 
-          <div className="text-xs text-zinc-400 mt-3 font-mono space-y-1.5 bg-zinc-900/60 p-3 rounded-lg border border-zinc-800/80">
+          {/* Mobile Quick-Action Bar when items are selected (hidden on Desktop) */}
+          {selectedItemIds.length > 0 && (
+            <div className="lg:hidden sticky bottom-2 left-0 right-0 z-20 w-full mt-3 bg-zinc-950/95 backdrop-blur border border-cyan-500/40 rounded-xl p-2.5 shadow-2xl space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-mono font-bold text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/30">
+                  {selectedItemIds.length} SELECTED
+                </span>
+                <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                  <button
+                    type="button"
+                    onClick={() => handleRotateSelectedBy(90)}
+                    className="px-2.5 py-1.5 bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg text-[11px] font-bold flex items-center space-x-1 active:scale-95"
+                  >
+                    <RotateCw className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>90°</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDuplicateSelected}
+                    className="px-2.5 py-1.5 bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-lg text-[11px] font-bold flex items-center space-x-1 active:scale-95"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Copy</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteSelected}
+                    className="px-2.5 py-1.5 bg-red-950/60 text-red-300 border border-red-500/40 rounded-lg text-[11px] font-bold flex items-center space-x-1 active:scale-95"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Del</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveSideTab('inspector');
+                      inspectorSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }}
+                    className="px-2.5 py-1.5 bg-red-600 text-white rounded-lg text-[11px] font-bold uppercase"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedItemIds([])}
+                    className="p-1.5 bg-zinc-900 text-zinc-400 border border-zinc-800 rounded-lg"
+                    title="Deselect"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-zinc-800/80 flex-wrap">
+                {/* Finger Fine Nudge D-Pad */}
+                <div className="flex items-center space-x-1">
+                  <span className="text-[10px] font-mono text-zinc-500 mr-1">Nudge:</span>
+                  <button type="button" onClick={() => handleGroupNudge(-0.1, 0)} className="p-1.5 bg-zinc-900 border border-zinc-700 rounded text-zinc-200 active:bg-zinc-800"><ArrowLeft className="w-3.5 h-3.5" /></button>
+                  <button type="button" onClick={() => handleGroupNudge(0, -0.1)} className="p-1.5 bg-zinc-900 border border-zinc-700 rounded text-zinc-200 active:bg-zinc-800"><ArrowUp className="w-3.5 h-3.5" /></button>
+                  <button type="button" onClick={() => handleGroupNudge(0, 0.1)} className="p-1.5 bg-zinc-900 border border-zinc-700 rounded text-zinc-200 active:bg-zinc-800"><ArrowDown className="w-3.5 h-3.5" /></button>
+                  <button type="button" onClick={() => handleGroupNudge(0.1, 0)} className="p-1.5 bg-zinc-900 border border-zinc-700 rounded text-zinc-200 active:bg-zinc-800"><ArrowRight className="w-3.5 h-3.5" /></button>
+                </div>
+
+                {/* Contextual Ungroup / Split / Merge */}
+                <div className="flex items-center gap-1.5">
+                  {singleSelectedItem && singleSelectedItem.itemType === 'name' && tokenizeNameCharacters(singleSelectedItem.customerName || '').filter((t) => t !== ' ').length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleUngroupSelectedName(singleSelectedItem)}
+                      className="px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded text-[11px] font-bold flex items-center space-x-1"
+                    >
+                      <Unlink className="w-3 h-3" />
+                      <span>Ungroup</span>
+                    </button>
+                  )}
+                  {singleSelectedItem && singleSelectedItem.itemType === 'number' && singleSelectedItem.number.replace(/\D/g, '').length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleSplitSelectedDigits(singleSelectedItem)}
+                      className="px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded text-[11px] font-bold flex items-center space-x-1"
+                    >
+                      <Split className="w-3 h-3" />
+                      <span>Split Digits</span>
+                    </button>
+                  )}
+                  {selectedItems.length >= 2 && selectedItems.every((i) => i.itemType === 'name') && (
+                    <button
+                      type="button"
+                      onClick={handleMergeSelectedNames}
+                      className="px-2.5 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded text-[11px] font-bold flex items-center space-x-1"
+                    >
+                      <Link className="w-3 h-3" />
+                      <span>Merge</span>
+                    </button>
+                  )}
+                  {selectedItems.length >= 2 && selectedItems.every((i) => i.itemType === 'number') && (
+                    <button
+                      type="button"
+                      onClick={handleMergeSelectedDigits}
+                      className="px-2.5 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded text-[11px] font-bold flex items-center space-x-1"
+                    >
+                      <Link className="w-3 h-3" />
+                      <span>Merge #</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="hidden lg:block text-xs text-zinc-400 mt-3 font-mono space-y-1.5 bg-zinc-900/60 p-3 rounded-lg border border-zinc-800/80">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px]">
               <span className="flex items-center space-x-1.5 text-zinc-300">
                 <kbd className="px-1.5 py-0.5 bg-zinc-950 border border-zinc-700 rounded text-cyan-400 font-bold">Ctrl + Z</kbd>
@@ -1823,7 +2660,10 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         </div>
 
         {/* Selected Item Inspector Panel - Sticky synchronized alongside viewport scrolling */}
-        <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-4 lg:self-start max-h-[calc(100vh-2rem)] overflow-y-auto pr-1">
+        <div
+          ref={inspectorSectionRef}
+          className="lg:col-span-4 space-y-6 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto pr-1"
+        >
           {/* Side Panel Tab Selector */}
           <div className="flex items-center space-x-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800 shadow-inner">
             <button
@@ -1956,6 +2796,27 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                     ))}
                   </div>
                 </div>
+
+                {/* Name Ungroup Control (Straight & Curved Names) */}
+                {singleSelectedItem.itemType === 'name' &&
+                  tokenizeNameCharacters(singleSelectedItem.customerName || '').filter((t) => t !== ' ').length > 1 && (
+                    <div className="bg-sky-950/30 border border-sky-500/40 p-3 rounded-lg space-y-2">
+                      <div className="flex items-center space-x-2 text-sky-300 text-xs font-bold uppercase font-mono">
+                        <Unlink className="w-4 h-4 text-sky-400" />
+                        <span>Name Ungrouping</span>
+                      </div>
+                      <p className="text-[10px] text-sky-200/70 font-mono">
+                        Ungroup "{singleSelectedItem.customerName}" into independent letters so each character can be moved, resized, or rotated individually.
+                      </p>
+                      <button
+                        onClick={() => handleUngroupSelectedName(singleSelectedItem)}
+                        className="w-full py-2 bg-sky-500 hover:bg-sky-400 text-zinc-950 text-xs font-bold uppercase font-mono rounded shadow flex items-center justify-center space-x-1.5 transition-all"
+                      >
+                        <Unlink className="w-3.5 h-3.5" />
+                        <span>Ungroup Name into Letters</span>
+                      </button>
+                    </div>
+                  )}
 
                 {/* Digit Splitting Control for Multi-Digit Numbers */}
                 {singleSelectedItem.itemType === 'number' && singleSelectedItem.number.replace(/\D/g, '').length > 1 && (
@@ -2291,44 +3152,92 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                   </div>
                 </div>
 
-                {/* Batch Digit Optimization (Split / Merge) */}
+                {/* Batch Digit & Name Optimization (Split / Ungroup / Merge) */}
                 {(() => {
                   const selItems = canvasItems.filter((i) => selectedItemIds.includes(i.id));
                   const multiDigitNumbers = selItems.filter((i) => i.itemType === 'number' && i.number.replace(/\D/g, '').length > 1);
                   const selectedNumbers = selItems.filter((i) => i.itemType === 'number');
+                  const multiCharNames = selItems.filter(
+                    (i) => i.itemType === 'name' && tokenizeNameCharacters(i.customerName || '').filter((t) => t !== ' ').length > 1
+                  );
+                  const selectedNames = selItems.filter((i) => i.itemType === 'name');
 
-                  if (multiDigitNumbers.length === 0 && selectedNumbers.length < 2) return null;
+                  if (
+                    multiDigitNumbers.length === 0 &&
+                    selectedNumbers.length < 2 &&
+                    multiCharNames.length === 0 &&
+                    selectedNames.length < 2
+                  ) {
+                    return null;
+                  }
 
                   return (
-                    <div className="bg-amber-950/30 border border-amber-500/40 p-3 rounded-lg space-y-2">
-                      <div className="flex items-center space-x-2 text-amber-300 text-xs font-bold uppercase font-mono">
-                        <Split className="w-4 h-4 text-amber-400" />
-                        <span>Digit Splitting &amp; Merging</span>
-                      </div>
+                    <div className="space-y-3">
+                      {(multiCharNames.length > 0 || selectedNames.length >= 2) && (
+                        <div className="bg-sky-950/30 border border-sky-500/40 p-3 rounded-lg space-y-2">
+                          <div className="flex items-center space-x-2 text-sky-300 text-xs font-bold uppercase font-mono">
+                            <Unlink className="w-4 h-4 text-sky-400" />
+                            <span>Name Ungrouping &amp; Grouping</span>
+                          </div>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        {multiDigitNumbers.length > 0 && (
-                          <button
-                            onClick={() => handleSplitSelectedDigits()}
-                            className="py-1.5 px-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-[10px] font-bold uppercase font-mono rounded shadow flex items-center justify-center space-x-1"
-                            title="Split all selected multi-digit numbers into independent digits"
-                          >
-                            <Unlink className="w-3.5 h-3.5" />
-                            <span>Split Digits ({multiDigitNumbers.length})</span>
-                          </button>
-                        )}
+                          <div className="grid grid-cols-2 gap-2">
+                            {multiCharNames.length > 0 && (
+                              <button
+                                onClick={() => handleUngroupSelectedName()}
+                                className="py-1.5 px-2 bg-sky-500 hover:bg-sky-400 text-zinc-950 text-[10px] font-bold uppercase font-mono rounded shadow flex items-center justify-center space-x-1"
+                                title="Ungroup selected names into independent editable letters"
+                              >
+                                <Unlink className="w-3.5 h-3.5" />
+                                <span>Ungroup ({multiCharNames.length})</span>
+                              </button>
+                            )}
 
-                        {selectedNumbers.length >= 2 && (
-                          <button
-                            onClick={handleMergeSelectedDigits}
-                            className="py-1.5 px-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-[10px] font-bold uppercase font-mono rounded shadow flex items-center justify-center space-x-1"
-                            title="Merge selected single digits left-to-right into a single number item"
-                          >
-                            <Link className="w-3.5 h-3.5" />
-                            <span>Merge Digits ({selectedNumbers.length})</span>
-                          </button>
-                        )}
-                      </div>
+                            {selectedNames.length >= 2 && (
+                              <button
+                                onClick={handleMergeSelectedNames}
+                                className="py-1.5 px-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-[10px] font-bold uppercase font-mono rounded shadow flex items-center justify-center space-x-1"
+                                title="Merge selected letters/parts left-to-right into a single grouped name"
+                              >
+                                <Link className="w-3.5 h-3.5" />
+                                <span>Group Name ({selectedNames.length})</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {(multiDigitNumbers.length > 0 || selectedNumbers.length >= 2) && (
+                        <div className="bg-amber-950/30 border border-amber-500/40 p-3 rounded-lg space-y-2">
+                          <div className="flex items-center space-x-2 text-amber-300 text-xs font-bold uppercase font-mono">
+                            <Split className="w-4 h-4 text-amber-400" />
+                            <span>Digit Splitting &amp; Merging</span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            {multiDigitNumbers.length > 0 && (
+                              <button
+                                onClick={() => handleSplitSelectedDigits()}
+                                className="py-1.5 px-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-[10px] font-bold uppercase font-mono rounded shadow flex items-center justify-center space-x-1"
+                                title="Split all selected multi-digit numbers into independent digits"
+                              >
+                                <Unlink className="w-3.5 h-3.5" />
+                                <span>Split Digits ({multiDigitNumbers.length})</span>
+                              </button>
+                            )}
+
+                            {selectedNumbers.length >= 2 && (
+                              <button
+                                onClick={handleMergeSelectedDigits}
+                                className="py-1.5 px-2 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-[10px] font-bold uppercase font-mono rounded shadow flex items-center justify-center space-x-1"
+                                title="Merge selected single digits left-to-right into a single number item"
+                              >
+                                <Link className="w-3.5 h-3.5" />
+                                <span>Merge Digits ({selectedNumbers.length})</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })()}

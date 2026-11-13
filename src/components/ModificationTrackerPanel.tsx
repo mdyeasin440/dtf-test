@@ -92,6 +92,24 @@ export const ModificationTrackerPanel: React.FC<ModificationTrackerPanelProps> =
           bg: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
           desc: 'Independently split by operator or full unbundle mode',
         };
+      case 'smart_name_split':
+        return {
+          label: 'Smart Name Split',
+          bg: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
+          desc: 'Automatically divided name into parts to fill unused film gaps',
+        };
+      case 'manual_name_ungroup':
+        return {
+          label: 'Name Ungrouped',
+          bg: 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40',
+          desc: 'Name ungrouped into individual editable letters',
+        };
+      case 'interlock_7_pair':
+        return {
+          label: '180° 7-Pair Nested',
+          bg: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
+          desc: 'Paired upright & upside-down 7s along diagonal contour to save width',
+        };
       default:
         return {
           label: 'Gap Optimization',
@@ -252,6 +270,9 @@ export const ModificationTrackerPanel: React.FC<ModificationTrackerPanelProps> =
           <option value="shelf_end_fill">Shelf End Fills</option>
           <option value="smart_pocket_fill">Smart Pockets</option>
           <option value="manual_unbundle">Manual Unbundled</option>
+          <option value="smart_name_split">Smart Name Splits</option>
+          <option value="manual_name_ungroup">Ungrouped Names</option>
+          <option value="interlock_7_pair">180° 7-Pairs</option>
         </select>
       </div>
 
@@ -308,7 +329,7 @@ export const ModificationTrackerPanel: React.FC<ModificationTrackerPanelProps> =
                 <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-2.5">
                     <div className="px-2 py-1 rounded bg-zinc-950 border border-zinc-700 text-amber-400 font-extrabold text-sm font-mono tracking-wider">
-                      #{log.originalNumber}
+                      {log.entryType === 'name' ? log.originalNumber : `#${log.originalNumber}`}
                     </div>
                     <div>
                       <div className="text-xs font-bold text-zinc-100 flex items-center space-x-1.5">
@@ -328,10 +349,10 @@ export const ModificationTrackerPanel: React.FC<ModificationTrackerPanelProps> =
                   </span>
                 </div>
 
-                {/* Relocated Digits Breakdown */}
+                {/* Relocated Parts/Digits Breakdown */}
                 <div className="bg-zinc-950/70 p-2.5 rounded-lg border border-zinc-800/80 space-y-1.5 font-mono text-[11px]">
                   <div className="flex items-center justify-between text-[10px] text-zinc-400 font-bold uppercase border-b border-zinc-800 pb-1">
-                    <span>Relocated Digits</span>
+                    <span>{log.entryType === 'name' ? 'Split Name Parts' : log.entryType === 'interlock' ? 'Interlocked Pair' : 'Relocated Digits'}</span>
                     <span className="text-emerald-400">
                       +{log.spaceSavedInches.toFixed(1)}" Width Saved
                     </span>
@@ -385,14 +406,16 @@ export const ModificationTrackerPanel: React.FC<ModificationTrackerPanelProps> =
                     </span>
                   </button>
 
-                  <button
-                    onClick={() => onMergeDigits(log)}
-                    className="py-1.5 px-2.5 bg-zinc-800 hover:bg-emerald-600 hover:text-white text-zinc-300 text-xs font-bold font-mono uppercase rounded border border-zinc-700 transition-all flex items-center space-x-1"
-                    title="Re-merge these digits back into a single compound number block"
-                  >
-                    <Link className="w-3.5 h-3.5" />
-                    <span>Re-Merge</span>
-                  </button>
+                  {log.reason !== 'interlock_7_pair' && (
+                    <button
+                      onClick={() => onMergeDigits(log)}
+                      className="py-1.5 px-2.5 bg-zinc-800 hover:bg-emerald-600 hover:text-white text-zinc-300 text-xs font-bold font-mono uppercase rounded border border-zinc-700 transition-all flex items-center space-x-1"
+                      title={log.entryType === 'name' ? 'Re-merge these letters/parts back into one grouped name' : 'Re-merge these digits back into a single compound number block'}
+                    >
+                      <Link className="w-3.5 h-3.5" />
+                      <span>Re-Merge</span>
+                    </button>
+                  )}
                 </div>
               </div>
             );
