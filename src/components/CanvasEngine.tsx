@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import {
   ZoomIn,
   ZoomOut,
@@ -160,15 +160,38 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   // Mobile / Touch Editing State (Desktop mouse behavior remains unchanged)
   const [touchMode, setTouchMode] = useState<'select' | 'pan'>('select');
   const [mobileMultiSelect, setMobileMultiSelect] = useState<boolean>(false);
+  const [isDraggingVScroll, setIsDraggingVScroll] = useState<boolean>(false);
+  const [isDraggingHScroll, setIsDraggingHScroll] = useState<boolean>(false);
+  const [mobileScrollMetrics, setMobileScrollMetrics] = useState({
+    scrollTop: 0,
+    scrollHeight: 1,
+    clientHeight: 1,
+    scrollLeft: 0,
+    scrollWidth: 1,
+    clientWidth: 1,
+  });
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const scrollWrapperRef = useRef<HTMLDivElement | null>(null);
   const inspectorSectionRef = useRef<HTMLDivElement | null>(null);
+  const vTrackInnerRef = useRef<HTMLDivElement | null>(null);
+  const hTrackInnerRef = useRef<HTMLDivElement | null>(null);
 
-  // Touch & Pointer gesture tracking refs
+  // Touch, Pinch Zoom & Scrollbar gesture tracking refs
+  const zoomRef = useRef<number>(zoom);
+  zoomRef.current = zoom;
   const activeTouchPointersRef = useRef<Map<number, { clientX: number; clientY: number }>>(new Map());
-  const twoFingerLastCenterRef = useRef<{ x: number; y: number } | null>(null);
+  const pinchStateRef = useRef<{
+    startDist: number;
+    startZoom: number;
+    lastMidX: number;
+    lastMidY: number;
+  } | null>(null);
+  const pendingPinchScrollRef = useRef<{ left: number; top: number } | null>(null);
+  const gestureWasMultiTouchRef = useRef<boolean>(false);
+  const vScrollDragOffsetRef = useRef<number>(0);
+  const hScrollDragOffsetRef = useRef<number>(0);
   const touchTapCandidateRef = useRef<{
     pointerId: number;
     itemId: string;
@@ -399,6 +422,19 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   const workspaceWidthInches = rollWidthInches + PASTEBOARD_MARGIN_X * 2;
   const canvasWidthPx = Math.round(workspaceWidthInches * pixelsPerInch);
 
+  const syncMobileScrollMetrics = useCallback(() => {
+    const wrapper = scrollWrapperRef.current;
+    if (!wrapper) return;
+    setMobileScrollMetrics({
+      scrollTop: wrapper.scrollTop,
+      scrollHeight: Math.max(1, wrapper.scrollHeight),
+      clientHeight: Math.max(1, wrapper.clientHeight),
+      scrollLeft: wrapper.scrollLeft,
+      scrollWidth: Math.max(1, wrapper.scrollWidth),
+      clientWidth: Math.max(1, wrapper.clientWidth),
+    });
+  }, []);
+
   // Mobile-only initial auto-fit & horizontal scroll centering on the 39" active print sheet
   const centerSheetHorizontally = useCallback((targetZoom: number) => {
     const wrapper = scrollWrapperRef.current;
@@ -408,31 +444,50 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     const sheetWidthPx = rollWidthInches * ppi;
     const availW = wrapper.clientWidth;
     if (sheetWidthPx <= availW) {
-      // Center the 39" sheet cleanly in viewport
       wrapper.scrollLeft = Math.max(0, sheetLeftPx - (availW - sheetWidthPx) / 2);
     } else {
-      // Align left edge of 39" sheet cleanly with tiny margin
-      wrapper.scrollLeft = Math.max(0, sheetLeftPx - 8);
+      wrapper.scrollLeft = Math.max(0, sheetLeftPx - 6);
     }
-  }, [rollWidthInches]);
+    syncMobileScrollMetrics();
+  }, [rollWidthInches, syncMobileScrollMetrics]);
 
   const fitSheetForMobile = useCallback(() => {
     const wrapper = scrollWrapperRef.current;
-    const availW = wrapper?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth - 32 : 360);
+    const docW = typeof document !== 'undefined' ? document.documentElement.clientWidth : 360;
+    const winW = typeof window !== 'undefined' ? window.innerWidth : 360;
+    const realScreenW = Math.min(docW || winW, winW || docW);
+    const availW = wrapper && wrapper.clientWidth > 0 && wrapper.clientWidth <= realScreenW
+      ? wrapper.clientWidth
+      : Math.max(240, realScreenW - 56);
     const idealZoom = parseFloat(
-      Math.max(0.32, Math.min(0.65, (availW - 12) / (rollWidthInches * 20))).toFixed(2)
+      Math.max(0.20, Math.min(0.65, (availW - 10) / (rollWidthInches * 20))).toFixed(2)
     );
+    zoomRef.current = idealZoom;
     setZoom(idealZoom);
     requestAnimationFrame(() => {
-      setTimeout(() => centerSheetHorizontally(idealZoom), 40);
+      setTimeout(() => centerSheetHorizontally(idealZoom), 60);
     });
   }, [rollWidthInches, centerSheetHorizontally]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
-      fitSheetForMobile();
+    if (typeof window !== 'undefined') {
+      const realW = Math.min(document.documentElement.clientWidth || window.innerWidth, window.innerWidth);
+      if (realW < 1024) {
+        requestAnimationFrame(() => fitSheetForMobile());
+      }
     }
   }, [fitSheetForMobile]);
+
+  // Apply anchored scroll offset synchronously right after pinch zoom updates canvas dimensions
+  useLayoutEffect(() => {
+    const wrapper = scrollWrapperRef.current;
+    if (wrapper && pendingPinchScrollRef.current) {
+      wrapper.scrollLeft = Math.max(0, pendingPinchScrollRef.current.left);
+      wrapper.scrollTop = Math.max(0, pendingPinchScrollRef.current.top);
+      pendingPinchScrollRef.current = null;
+    }
+    syncMobileScrollMetrics();
+  }, [zoom, metrics.totalRollLengthInches, canvasItems.length, syncMobileScrollMetrics]);
 
   // Detect collisions
   const collisionsMap = checkCollisions(canvasItems, layoutSettings.marginInches);
@@ -846,12 +901,16 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     if (isTouch) {
       activeTouchPointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
 
-      // Two-finger pan gesture on mobile (always pans cleanly without modifying objects)
+      // Two-finger pinch zoom + pan gesture on mobile (always zooms/pans cleanly without editing objects)
       if (activeTouchPointersRef.current.size >= 2) {
+        gestureWasMultiTouchRef.current = true;
         const pts = Array.from(activeTouchPointersRef.current.values());
-        twoFingerLastCenterRef.current = {
-          x: (pts[0].clientX + pts[1].clientX) / 2,
-          y: (pts[0].clientY + pts[1].clientY) / 2,
+        const dist = Math.hypot(pts[1].clientX - pts[0].clientX, pts[1].clientY - pts[0].clientY);
+        pinchStateRef.current = {
+          startDist: Math.max(12, dist),
+          startZoom: zoomRef.current,
+          lastMidX: (pts[0].clientX + pts[1].clientX) / 2,
+          lastMidY: (pts[0].clientY + pts[1].clientY) / 2,
         };
         // Cancel any 1-finger interaction started by first finger
         setIsDragging(false);
@@ -859,13 +918,14 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         setActiveResizeHandle(null);
         setInitialResizeState(null);
         setSelectionBox(null);
+        marqueeBaseSelectionRef.current = [];
         setDragStartPos(null);
         dragStartSnapshotRef.current = null;
         touchTapCandidateRef.current = null;
         return;
       }
 
-      if (touchMode === 'pan') {
+      if (gestureWasMultiTouchRef.current || touchMode === 'pan') {
         return;
       }
     } else {
@@ -963,7 +1023,6 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
       if (additiveMode) {
         if (clickedItem) {
           if (isTouch) {
-            // On touch multi-select, add immediately and remember if it was already selected so a tap (without drag) toggles it off
             if (!newSelectedIds.includes(clickedItem.id)) {
               newSelectedIds.push(clickedItem.id);
             }
@@ -1034,24 +1093,50 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         activeTouchPointersRef.current.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
       }
 
-      // Two-finger pan across roll
-      if (activeTouchPointersRef.current.size >= 2) {
+      // Two-finger Canva-style pinch zoom + pan
+      if (activeTouchPointersRef.current.size >= 2 && pinchStateRef.current) {
         const pts = Array.from(activeTouchPointersRef.current.values());
-        const cx = (pts[0].clientX + pts[1].clientX) / 2;
-        const cy = (pts[0].clientY + pts[1].clientY) / 2;
-        if (twoFingerLastCenterRef.current) {
-          const dxPx = cx - twoFingerLastCenterRef.current.x;
-          const dyPx = cy - twoFingerLastCenterRef.current.y;
-          if (scrollWrapperRef.current) {
-            scrollWrapperRef.current.scrollLeft -= dxPx;
+        const curDist = Math.hypot(pts[1].clientX - pts[0].clientX, pts[1].clientY - pts[0].clientY);
+        const curMidX = (pts[0].clientX + pts[1].clientX) / 2;
+        const curMidY = (pts[0].clientY + pts[1].clientY) / 2;
+
+        const scaleFactor = Math.max(0.25, Math.min(4.0, curDist / pinchStateRef.current.startDist));
+        const prevZoom = zoomRef.current;
+        const nextZoom = Math.max(
+          0.2,
+          Math.min(2.0, parseFloat((pinchStateRef.current.startZoom * scaleFactor).toFixed(3)))
+        );
+
+        const panDx = curMidX - pinchStateRef.current.lastMidX;
+        const panDy = curMidY - pinchStateRef.current.lastMidY;
+
+        const wrapper = scrollWrapperRef.current;
+        if (wrapper) {
+          const wRect = wrapper.getBoundingClientRect();
+          const relX = curMidX - wRect.left + wrapper.scrollLeft;
+          const relY = curMidY - wRect.top + wrapper.scrollTop;
+          const zoomRatio = nextZoom / Math.max(0.05, prevZoom);
+
+          const targetLeft = relX * zoomRatio - (curMidX - wRect.left) - panDx;
+          const targetTop = relY * zoomRatio - (curMidY - wRect.top) - panDy;
+
+          if (Math.abs(nextZoom - prevZoom) >= 0.002) {
+            pendingPinchScrollRef.current = { left: targetLeft, top: targetTop };
+            zoomRef.current = nextZoom;
+            setZoom(nextZoom);
+          } else {
+            wrapper.scrollLeft = Math.max(0, wrapper.scrollLeft - panDx);
+            wrapper.scrollTop = Math.max(0, wrapper.scrollTop - panDy);
+            syncMobileScrollMetrics();
           }
-          window.scrollBy(0, -dyPx);
         }
-        twoFingerLastCenterRef.current = { x: cx, y: cy };
+
+        pinchStateRef.current.lastMidX = curMidX;
+        pinchStateRef.current.lastMidY = curMidY;
         return;
       }
 
-      if (touchMode === 'pan') {
+      if (gestureWasMultiTouchRef.current || touchMode === 'pan') {
         return;
       }
 
@@ -1300,7 +1385,10 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     if (isTouch) {
       activeTouchPointersRef.current.delete(e.pointerId);
       if (activeTouchPointersRef.current.size < 2) {
-        twoFingerLastCenterRef.current = null;
+        pinchStateRef.current = null;
+      }
+      if (activeTouchPointersRef.current.size === 0) {
+        gestureWasMultiTouchRef.current = false;
       }
 
       // If in mobile Multi-Select tap mode and user tapped an already-selected item without dragging, toggle it off
@@ -1343,6 +1431,120 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
     marqueeBaseSelectionRef.current = [];
     setDragStartPos(null);
     dragStartSnapshotRef.current = null;
+  };
+
+  // Dedicated Mobile Side Vertical Scroll Bar Handlers (isolated from canvas objects)
+  const updateVScrollFromPointer = (clientY: number, useOffset: boolean) => {
+    const track = vTrackInnerRef.current;
+    const wrapper = scrollWrapperRef.current;
+    if (!track || !wrapper) return;
+    const rect = track.getBoundingClientRect();
+    const maxScroll = Math.max(0, wrapper.scrollHeight - wrapper.clientHeight);
+    if (maxScroll <= 0 || rect.height <= 0) return;
+
+    const thumbPct = Math.min(1, wrapper.clientHeight / Math.max(1, wrapper.scrollHeight));
+    const thumbH = Math.max(40, thumbPct * rect.height);
+    const travelH = Math.max(1, rect.height - thumbH);
+
+    const targetThumbTop = useOffset
+      ? clientY - rect.top - vScrollDragOffsetRef.current
+      : clientY - rect.top - thumbH / 2;
+    const ratio = Math.max(0, Math.min(1, targetThumbTop / travelH));
+    wrapper.scrollTop = ratio * maxScroll;
+    syncMobileScrollMetrics();
+  };
+
+  const handleVScrollPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const track = vTrackInnerRef.current;
+    const wrapper = scrollWrapperRef.current;
+    if (!track || !wrapper) return;
+    if (typeof e.currentTarget.setPointerCapture === 'function') {
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    }
+
+    const rect = track.getBoundingClientRect();
+    const maxScroll = Math.max(1, wrapper.scrollHeight - wrapper.clientHeight);
+    const thumbPct = Math.min(1, wrapper.clientHeight / Math.max(1, wrapper.scrollHeight));
+    const thumbH = Math.max(40, thumbPct * rect.height);
+    const travelH = Math.max(1, rect.height - thumbH);
+    const curThumbTop = (wrapper.scrollTop / maxScroll) * travelH;
+    const pointerLocalY = e.clientY - rect.top;
+
+    const hitThumb = pointerLocalY >= curThumbTop && pointerLocalY <= curThumbTop + thumbH;
+    vScrollDragOffsetRef.current = hitThumb ? pointerLocalY - curThumbTop : thumbH / 2;
+    setIsDraggingVScroll(true);
+    updateVScrollFromPointer(e.clientY, hitThumb);
+  };
+
+  const handleVScrollPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingVScroll) return;
+    updateVScrollFromPointer(e.clientY, true);
+  };
+
+  const handleVScrollPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    setIsDraggingVScroll(false);
+    try {
+      if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {}
+  };
+
+  // Dedicated Mobile Bottom Horizontal Scroll Bar Handlers (for navigating when pinch-zoomed in)
+  const updateHScrollFromPointer = (clientX: number, useOffset: boolean) => {
+    const track = hTrackInnerRef.current;
+    const wrapper = scrollWrapperRef.current;
+    if (!track || !wrapper) return;
+    const rect = track.getBoundingClientRect();
+    const maxScroll = Math.max(0, wrapper.scrollWidth - wrapper.clientWidth);
+    if (maxScroll <= 0 || rect.width <= 0) return;
+
+    const thumbPct = Math.min(1, wrapper.clientWidth / Math.max(1, wrapper.scrollWidth));
+    const thumbW = Math.max(44, thumbPct * rect.width);
+    const travelW = Math.max(1, rect.width - thumbW);
+
+    const targetThumbLeft = useOffset
+      ? clientX - rect.left - hScrollDragOffsetRef.current
+      : clientX - rect.left - thumbW / 2;
+    const ratio = Math.max(0, Math.min(1, targetThumbLeft / travelW));
+    wrapper.scrollLeft = ratio * maxScroll;
+    syncMobileScrollMetrics();
+  };
+
+  const handleHScrollPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const track = hTrackInnerRef.current;
+    const wrapper = scrollWrapperRef.current;
+    if (!track || !wrapper) return;
+    if (typeof e.currentTarget.setPointerCapture === 'function') {
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    }
+
+    const rect = track.getBoundingClientRect();
+    const maxScroll = Math.max(1, wrapper.scrollWidth - wrapper.clientWidth);
+    const thumbPct = Math.min(1, wrapper.clientWidth / Math.max(1, wrapper.scrollWidth));
+    const thumbW = Math.max(44, thumbPct * rect.width);
+    const travelW = Math.max(1, rect.width - thumbW);
+    const curThumbLeft = (wrapper.scrollLeft / maxScroll) * travelW;
+    const pointerLocalX = e.clientX - rect.left;
+
+    const hitThumb = pointerLocalX >= curThumbLeft && pointerLocalX <= curThumbLeft + thumbW;
+    hScrollDragOffsetRef.current = hitThumb ? pointerLocalX - curThumbLeft : thumbW / 2;
+    setIsDraggingHScroll(true);
+    updateHScrollFromPointer(e.clientX, hitThumb);
+  };
+
+  const handleHScrollPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingHScroll) return;
+    updateHScrollFromPointer(e.clientX, true);
+  };
+
+  const handleHScrollPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    setIsDraggingHScroll(false);
+    try {
+      if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {}
   };
 
   // Split Multi-Digit Numbers into Independent Movable Single Digits
@@ -2186,13 +2388,13 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   const singleSelectedItem = selectedItems.length === 1 ? selectedItems[0] : null;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 py-3 lg:py-6 overflow-x-hidden">
       {/* Top Toolbar */}
-      <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-4 mb-6 shadow-xl flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-3 sm:p-4 mb-4 lg:mb-6 shadow-xl flex flex-wrap items-center justify-between gap-3 lg:gap-4">
         {/* Roll Settings */}
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2 text-xs font-mono text-red-400 bg-red-600/10 px-3 py-1.5 rounded border border-red-500/30 font-bold uppercase">
-            <Ruler className="w-4 h-4" />
+        <div className="flex flex-wrap items-center gap-2 lg:gap-4 max-w-full">
+          <div className="flex items-center space-x-2 text-xs font-mono text-red-400 bg-red-600/10 px-2.5 lg:px-3 py-1.5 rounded border border-red-500/30 font-bold uppercase">
+            <Ruler className="w-4 h-4 shrink-0" />
             <span>Width: <strong>39 Inches</strong></span>
           </div>
 
@@ -2211,7 +2413,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                   setModificationLogs(result.modificationLogs || []);
                 }
               }}
-              className="bg-zinc-950 text-white text-xs px-2.5 py-1.5 rounded border border-zinc-800 focus:outline-none font-mono"
+              className="bg-zinc-950 text-white text-xs px-2 py-1.5 rounded border border-zinc-800 focus:outline-none font-mono max-w-[165px] sm:max-w-none"
             >
               <option value={0.05}>0.05" Tight (1.2mm)</option>
               <option value={0.10}>0.10" Minimal (2.5mm)</option>
@@ -2235,7 +2437,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
                   setModificationLogs(result.modificationLogs || []);
                 }
               }}
-              className="bg-zinc-950 text-white text-xs px-2.5 py-1.5 rounded border border-zinc-800 focus:outline-none font-mono"
+              className="bg-zinc-950 text-white text-xs px-2 py-1.5 rounded border border-zinc-800 focus:outline-none font-mono max-w-[185px] sm:max-w-none"
             >
               <option value="row_by_row_structured">Row-by-Row Names then Numbers</option>
               <option value="paired_order_rows">Paired Order Rows</option>
@@ -2362,7 +2564,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         {/* Zoom Controls */}
         <div className="flex items-center space-x-2 bg-zinc-950 p-1 rounded border border-zinc-800">
           <button
-            onClick={() => setZoom((z) => Math.max(0.3, z - 0.1))}
+            onClick={() => setZoom((z) => Math.max(0.2, parseFloat((z - 0.1).toFixed(2))))}
             className="p-1.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800"
             title="Zoom Out"
           >
@@ -2370,7 +2572,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
           </button>
           <span className="text-xs font-mono text-zinc-300 px-2">{Math.round(zoom * 100)}%</span>
           <button
-            onClick={() => setZoom((z) => Math.min(1.5, z + 0.1))}
+            onClick={() => setZoom((z) => Math.min(2.0, parseFloat((z + 0.1).toFixed(2))))}
             className="p-1.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800"
             title="Zoom In"
           >
@@ -2418,11 +2620,11 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
               }`}
             >
               <Hand className="w-3.5 h-3.5" />
-              <span>Scroll Sheet</span>
+              <span>Pan Mode</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <button
               type="button"
               onClick={() => setMobileMultiSelect((v) => !v)}
@@ -2447,77 +2649,172 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
 
             <button
               type="button"
-              onClick={() => centerSheetHorizontally(zoom)}
+              onClick={fitSheetForMobile}
               className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold uppercase bg-zinc-950 text-zinc-300 border border-zinc-800"
             >
-              Center 39"
+              Fit 39"
             </button>
           </div>
         </div>
 
         <p className="text-[10px] font-mono text-zinc-400 leading-snug">
           {touchMode === 'select'
-            ? 'Finger on item: tap or drag to move. Finger on empty area: drag a box to multi-select objects. Use 2 fingers anytime to scroll.'
-            : 'Scroll mode active: swipe freely with 1 finger to scroll the 39" roll.'}
+            ? 'Touch objects to edit/move • Drag empty space to box-select • Pinch with 2 fingers to zoom • Use side scrollbar to scroll roll.'
+            : 'Pan mode active: swipe freely inside canvas, or use pinch-to-zoom anytime.'}
         </p>
       </div>
 
       {/* Main Grid: Interactive Canvas + Item Inspector Side Panel */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start relative">
         {/* Canvas Area */}
-        <div
-          ref={scrollWrapperRef}
-          className="lg:col-span-8 overflow-x-auto bg-zinc-900 p-2 sm:p-4 lg:p-6 rounded-xl border border-zinc-800 shadow-2xl flex flex-col items-start lg:items-center"
-        >
-          {/* Desktop Top Ruler Header with Pasteboard Bounds */}
-          <div
-            className="hidden lg:flex bg-zinc-950 border border-zinc-800 mb-2 items-center justify-between text-[10px] font-mono text-zinc-500 px-3 py-1.5 rounded uppercase shadow-inner"
-            style={{ width: `${canvasWidthPx}px` }}
-          >
-            <span className="text-amber-500/80 font-bold flex items-center space-x-1">
-              <span>◄ WEST PASTEBOARD (-10")</span>
-            </span>
-            <span className="text-red-400 font-bold bg-red-600/10 px-2 py-0.5 rounded border border-red-500/30">
-              0.0" (LEFT SHEET EDGE)
-            </span>
-            <span className="text-zinc-300">19.5" (SHEET CENTER)</span>
-            <span className="text-red-400 font-bold bg-red-600/10 px-2 py-0.5 rounded border border-red-500/30">
-              39.0" (RIGHT SHEET EDGE)
-            </span>
-            <span className="text-amber-500/80 font-bold flex items-center space-x-1">
-              <span>EAST PASTEBOARD (+10") ►</span>
-            </span>
+        <div className="lg:col-span-8 bg-zinc-900 p-1.5 sm:p-3 lg:p-6 rounded-xl border border-zinc-800 shadow-2xl flex flex-col items-stretch lg:items-center min-w-0">
+          {/* Mobile Row: Canvas Viewport + Dedicated Right-Side Vertical Scroll Bar */}
+          <div className="flex w-full items-stretch gap-1.5 lg:block">
+            <div
+              ref={scrollWrapperRef}
+              onScroll={syncMobileScrollMetrics}
+              className="flex-1 min-w-0 max-lg:h-[64vh] max-lg:min-h-[380px] max-lg:max-h-[640px] overflow-auto lg:overflow-x-auto lg:h-auto flex flex-col items-start lg:items-center rounded-lg"
+            >
+              {/* Desktop Top Ruler Header with Pasteboard Bounds */}
+              <div
+                className="hidden lg:flex bg-zinc-950 border border-zinc-800 mb-2 items-center justify-between text-[10px] font-mono text-zinc-500 px-3 py-1.5 rounded uppercase shadow-inner"
+                style={{ width: `${canvasWidthPx}px` }}
+              >
+                <span className="text-amber-500/80 font-bold flex items-center space-x-1">
+                  <span>◄ WEST PASTEBOARD (-10")</span>
+                </span>
+                <span className="text-red-400 font-bold bg-red-600/10 px-2 py-0.5 rounded border border-red-500/30">
+                  0.0" (LEFT SHEET EDGE)
+                </span>
+                <span className="text-zinc-300">19.5" (SHEET CENTER)</span>
+                <span className="text-red-400 font-bold bg-red-600/10 px-2 py-0.5 rounded border border-red-500/30">
+                  39.0" (RIGHT SHEET EDGE)
+                </span>
+                <span className="text-amber-500/80 font-bold flex items-center space-x-1">
+                  <span>EAST PASTEBOARD (+10") ►</span>
+                </span>
+              </div>
+
+              {/* Mobile Compact Top Ruler Header */}
+              <div
+                className="flex lg:hidden bg-zinc-950 border border-zinc-800 mb-1 items-center justify-between text-[8px] font-mono text-zinc-500 px-2 py-1 rounded uppercase shrink-0"
+                style={{ width: `${canvasWidthPx}px` }}
+              >
+                <span className="text-amber-500/70">◄ -10"</span>
+                <span className="text-red-400 font-bold">0" EDGE</span>
+                <span className="text-zinc-300 font-bold">39" PRINT SHEET</span>
+                <span className="text-red-400 font-bold">39" EDGE</span>
+                <span className="text-amber-500/70">+10" ►</span>
+              </div>
+
+              <div
+                ref={containerRef}
+                className="relative border-2 border-zinc-800 rounded overflow-hidden shadow-2xl bg-[#141418] shrink-0"
+                style={{ width: `${canvasWidthPx}px` }}
+              >
+                <canvas
+                  ref={canvasRef}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerCancel={handlePointerUp}
+                  style={{
+                    touchAction: touchMode === 'pan' ? 'pan-x pan-y' : 'none',
+                  }}
+                  className="block select-none"
+                />
+              </div>
+            </div>
+
+            {/* Dedicated Mobile Right-Side Vertical Scroll Bar (100% separate from canvas object editing) */}
+            {(() => {
+              const maxScrollV = Math.max(0, mobileScrollMetrics.scrollHeight - mobileScrollMetrics.clientHeight);
+              const thumbRatioV = Math.min(1, mobileScrollMetrics.clientHeight / Math.max(1, mobileScrollMetrics.scrollHeight));
+              const thumbHeightPctV = Math.max(12, Math.min(100, thumbRatioV * 100));
+              const thumbTopPctV = maxScrollV > 0
+                ? (mobileScrollMetrics.scrollTop / maxScrollV) * (100 - thumbHeightPctV)
+                : 0;
+              const currentInchPos = Math.max(
+                0,
+                Math.round(mobileScrollMetrics.scrollTop / Math.max(1, pixelsPerInch) - PASTEBOARD_MARGIN_Y)
+              );
+
+              return (
+                <div
+                  onPointerDown={handleVScrollPointerDown}
+                  onPointerMove={handleVScrollPointerMove}
+                  onPointerUp={handleVScrollPointerUp}
+                  onPointerCancel={handleVScrollPointerUp}
+                  style={{ touchAction: 'none' }}
+                  className="lg:hidden w-8 sm:w-9 shrink-0 bg-zinc-950 border border-zinc-800 rounded-xl relative select-none flex flex-col items-center py-1.5 shadow-inner"
+                  title="Drag up/down to scroll the 39-inch print roll"
+                >
+                  <span className="text-[8px] font-mono text-zinc-500 pointer-events-none leading-none">
+                    0"
+                  </span>
+                  <div ref={vTrackInnerRef} className="relative w-full flex-1 my-1.5">
+                    <div
+                      style={{
+                        top: `${thumbTopPctV}%`,
+                        height: `${thumbHeightPctV}%`,
+                      }}
+                      className={`absolute left-1 right-1 rounded-lg border transition-colors flex flex-col items-center justify-center gap-0.5 pointer-events-none ${
+                        isDraggingVScroll
+                          ? 'bg-red-600 border-red-300 shadow-lg shadow-red-600/40'
+                          : 'bg-zinc-800 border-zinc-600'
+                      }`}
+                    >
+                      <span className="w-3 h-0.5 bg-zinc-200 rounded-full" />
+                      <span className="w-3 h-0.5 bg-zinc-200 rounded-full" />
+                      <span className="w-3 h-0.5 bg-zinc-200 rounded-full" />
+                      {isDraggingVScroll && (
+                        <span className="absolute right-9 bg-red-600 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap">
+                          {currentInchPos}"
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-[8px] font-mono text-zinc-500 pointer-events-none leading-none">
+                    {Math.round(metrics.totalRollLengthInches || 24)}"
+                  </span>
+                </div>
+              );
+            })()}
           </div>
 
-          {/* Mobile Compact Top Ruler Header */}
-          <div
-            className="flex lg:hidden bg-zinc-950 border border-zinc-800 mb-1.5 items-center justify-between text-[9px] font-mono text-zinc-500 px-2 py-1 rounded uppercase"
-            style={{ width: `${canvasWidthPx}px` }}
-          >
-            <span className="text-amber-500/70">◄ -10"</span>
-            <span className="text-red-400 font-bold">0" EDGE</span>
-            <span className="text-zinc-300 font-bold">39" PRINT SHEET</span>
-            <span className="text-red-400 font-bold">39" EDGE</span>
-            <span className="text-amber-500/70">+10" ►</span>
-          </div>
+          {/* Dedicated Mobile Bottom Horizontal Scroll Bar (shown when zoomed wider than mobile frame) */}
+          {mobileScrollMetrics.scrollWidth > mobileScrollMetrics.clientWidth + 6 && (() => {
+            const maxScrollH = Math.max(1, mobileScrollMetrics.scrollWidth - mobileScrollMetrics.clientWidth);
+            const thumbRatioH = Math.min(1, mobileScrollMetrics.clientWidth / Math.max(1, mobileScrollMetrics.scrollWidth));
+            const thumbWidthPctH = Math.max(16, Math.min(100, thumbRatioH * 100));
+            const thumbLeftPctH = (mobileScrollMetrics.scrollLeft / maxScrollH) * (100 - thumbWidthPctH);
 
-          <div
-            ref={containerRef}
-            className="relative border-2 border-zinc-800 rounded overflow-hidden shadow-2xl bg-[#141418]"
-            style={{ width: `${canvasWidthPx}px` }}
-          >
-            <canvas
-              ref={canvasRef}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              onPointerCancel={handlePointerUp}
-              style={{
-                touchAction: touchMode === 'pan' ? 'pan-x pan-y' : 'none',
-              }}
-              className="block select-none"
-            />
-          </div>
+            return (
+              <div
+                onPointerDown={handleHScrollPointerDown}
+                onPointerMove={handleHScrollPointerMove}
+                onPointerUp={handleHScrollPointerUp}
+                onPointerCancel={handleHScrollPointerUp}
+                style={{ touchAction: 'none' }}
+                className="lg:hidden w-full h-6 mt-1.5 bg-zinc-950 border border-zinc-800 rounded-lg relative select-none flex items-center px-1.5"
+                title="Drag left/right to pan horizontally"
+              >
+                <div ref={hTrackInnerRef} className="relative w-full h-full">
+                  <div
+                    style={{
+                      left: `${thumbLeftPctH}%`,
+                      width: `${thumbWidthPctH}%`,
+                    }}
+                    className={`absolute top-1 bottom-1 rounded-md border pointer-events-none ${
+                      isDraggingHScroll
+                        ? 'bg-red-600 border-red-300'
+                        : 'bg-zinc-800 border-zinc-600'
+                    }`}
+                  />
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Mobile Quick-Action Bar when items are selected (hidden on Desktop) */}
           {selectedItemIds.length > 0 && (

@@ -28,22 +28,22 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-zinc-900/95 backdrop-blur border-b border-zinc-800 shadow-xl">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between py-2 lg:py-0 lg:h-16 gap-2">
           {/* Logo & Brand */}
           <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('bulk')}>
-            <div className="w-9 h-9 rounded-lg bg-zinc-900 border border-red-500/40 p-0.5 shadow-[0_0_12px_rgba(239,68,68,0.3)] flex items-center justify-center">
+            <div className="w-8 h-8 lg:w-9 lg:h-9 rounded-lg bg-zinc-900 border border-red-500/40 p-0.5 shadow-[0_0_12px_rgba(239,68,68,0.3)] flex items-center justify-center shrink-0">
               <div className="w-full h-full bg-zinc-950 rounded flex items-center justify-center relative">
                 <Printer className="w-4 h-4 text-red-500" />
                 <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-600 shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
               </div>
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center space-x-2">
-                <span className="font-black tracking-tighter text-lg text-white uppercase">
+                <span className="font-black tracking-tighter text-base lg:text-lg text-white uppercase truncate">
                   SPIDEY JERSEY
                 </span>
-                <span className="text-[10px] font-mono tracking-widest px-2 py-0.5 bg-red-600/10 text-red-400 border border-red-500/30 rounded">
+                <span className="text-[10px] font-mono tracking-widest px-1.5 lg:px-2 py-0.5 bg-red-600/10 text-red-400 border border-red-500/30 rounded shrink-0">
                   DTF PRO v2.4
                 </span>
               </div>
@@ -54,16 +54,16 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Navigation Tabs */}
-          <nav className="flex space-x-1.5 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+          <nav className="flex space-x-1 sm:space-x-1.5 bg-zinc-950 p-1 rounded-xl border border-zinc-800 overflow-x-auto max-w-full">
             <button
               onClick={() => setActiveTab('bulk')}
-              className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+              className={`flex items-center space-x-1.5 sm:space-x-2 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
                 activeTab === 'bulk'
                   ? 'bg-red-600 text-white shadow-lg shadow-red-900/30'
                   : 'text-zinc-400 hover:text-white hover:bg-zinc-800/80'
               }`}
             >
-              <FileText className="w-4 h-4" />
+              <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span>1. Bulk Orders</span>
               {ordersCount > 0 && (
                 <span className="ml-1 text-[10px] font-mono px-1.5 py-0.2 bg-black/40 text-white rounded">
@@ -74,25 +74,25 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               onClick={() => setActiveTab('canvas')}
-              className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+              className={`flex items-center space-x-1.5 sm:space-x-2 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
                 activeTab === 'canvas'
                   ? 'bg-red-600 text-white shadow-lg shadow-red-900/30'
                   : 'text-zinc-400 hover:text-white hover:bg-zinc-800/80'
               }`}
             >
-              <Layers className="w-4 h-4" />
+              <Layers className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span>2. 39" Nesting Canvas</span>
             </button>
 
             <button
               onClick={() => setActiveTab('database')}
-              className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+              className={`flex items-center space-x-1.5 sm:space-x-2 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
                 activeTab === 'database'
                   ? 'bg-red-600 text-white shadow-lg shadow-red-900/30'
                   : 'text-zinc-400 hover:text-white hover:bg-zinc-800/80'
               }`}
             >
-              <Database className="w-4 h-4" />
+              <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span>Design Presets</span>
               <span className="text-[10px] font-mono px-1.5 py-0.2 bg-zinc-800 text-zinc-300 rounded border border-zinc-700">
                 {presetsCount}
@@ -101,13 +101,13 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               onClick={() => setActiveTab('export')}
-              className={`flex items-center space-x-2 px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+              className={`flex items-center space-x-1.5 sm:space-x-2 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
                 activeTab === 'export'
                   ? 'bg-red-600 text-white shadow-lg shadow-red-900/30'
                   : 'text-zinc-300 hover:text-white hover:bg-zinc-800/80'
               }`}
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span>Export DTF File</span>
             </button>
           </nav>
