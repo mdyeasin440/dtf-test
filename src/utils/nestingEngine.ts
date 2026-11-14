@@ -8,8 +8,13 @@ import {
   RollMetrics,
 } from '../types';
 import { getLoadedImage } from './canvasRenderer';
+import { DOT_HEIGHT_RATIO } from './letterAssetHelper';
 import {
   calculateTightTextDimensions,
+  computeCurvedTextLayout,
+  CurvedGlyphExtent,
+  getCachedAssetAspectRatio,
+  getDefaultLetterRatio,
   isPresetCurved,
   tokenizeNameCharacters,
 } from './textMeasurement';
@@ -165,27 +170,41 @@ interface HorizontalSpan {
   empty?: boolean;
 }
 
-const PROFILE_SLICES = 24;
+const PROFILE_SLICES = 48;
 const digitProfileCache = new Map<string, HorizontalSpan[]>();
+const nameProfileCache = new Map<string, HorizontalSpan[]>();
 
 /**
- * Returns a 24-slice vertical profile of horizontal ink occupancy (normalized 0..1)
- * for a single digit ('7', etc.), reading real pixel silhouettes when available and
- * falling back to conservative athletic jersey geometry otherwise.
+ * Checks whether a name contains the combined "A'" token.
  */
-function getDigitHorizontalProfile(digit: string, preset: any): HorizontalSpan[] {
+function isApName(name: string | undefined): boolean {
+  if (!name) return false;
+  return tokenizeNameCharacters(name.trim()).includes("A'");
+}
+
+/**
+ * Returns a 48-slice vertical profile of horizontal ink occupancy (normalized 0..1)
+ * for a single digit ('7', etc.), matching renderNumberText scaling and stroke width
+ * cleanly and using a serif-safe fallback when an image hasn't loaded yet.
+ */
+function getDigitHorizontalProfile(digit: string, preset: any, aspectRatio: number = 0.55): HorizontalSpan[] {
   const assetUrl = preset?.numberAssets?.[digit] || '';
   const fontFamily = preset?.numberStyle?.fontFamily || preset?.fontFamily || 'Oswald';
-  const strokeWidth = preset?.numberStyle?.strokeWidth ?? preset?.strokeWidth ?? 0;
-  const cacheKey = `${digit}|${assetUrl ? assetUrl.slice(0, 80) : fontFamily}|${strokeWidth}`;
+  const rawStroke =
+    typeof preset?.numberStyle?.strokeWidth === 'number'
+      ? preset.numberStyle.strokeWidth
+      : typeof preset?.strokeWidth === 'number'
+      ? preset.strokeWidth
+      : 0;
+  const safeAspect = Math.max(0.25, Math.min(1.5, aspectRatio || 0.55));
+  const H = 192;
+  const W = Math.max(48, Math.round(H * safeAspect));
+  const cacheKey = `${digit}|${assetUrl ? assetUrl.slice(0, 80) : fontFamily}|${rawStroke}|${W}x${H}`;
 
   const cached = digitProfileCache.get(cacheKey);
   if (cached) return cached;
 
-  // Attempt pixel-exact scan if running in browser
   if (typeof document !== 'undefined') {
-    const W = 64;
-    const H = 128;
     const canvas = document.createElement('canvas');
     canvas.width = W;
     canvas.height = H;
@@ -197,6 +216,7 @@ function getDigitHorizontalProfile(digit: string, preset: any): HorizontalSpan[]
         const img = getLoadedImage(assetUrl);
         if (img && img.complete && img.naturalWidth > 0) {
           try {
+            ctx.clearRect(0, 0, W, H);
             ctx.drawImage(img, 0, 0, W, H);
             drewPixels = true;
           } catch (_) {
@@ -207,15 +227,36 @@ function getDigitHorizontalProfile(digit: string, preset: any): HorizontalSpan[]
         ctx.clearRect(0, 0, W, H);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const fontSize = H * 0.92;
+        const fontSize = H * 0.95;
         ctx.font = `900 ${fontSize}px "${fontFamily}", "Bebas Neue", "Oswald", sans-serif`;
-        if (strokeWidth > 0) {
-          ctx.lineWidth = Math.max(1, (strokeWidth / 10) * 3);
-          ctx.strokeStyle = '#ffffff';
-          ctx.strokeText(digit, W / 2, H / 2);
-        }
+
+        const scalePerInch = H / 9.5;
+        const strokeWidthPx = rawStroke > 0 ? rawStroke * (scalePerInch / 30) : 0;
+        const metrics = ctx.measureText(digit);
+        const measuredW = metrics.width || W;
+        const inkW =
+          typeof metrics.actualBoundingBoxLeft === 'number' && typeof metrics.actualBoundingBoxRight === 'number'
+            ? Math.max(measuredW, metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight)
+            : measuredW;
+        const effectiveW = inkW + strokeWidthPx * 2.2;
+        const scaleX = effectiveW > 0 ? W / effectiveW : 1;
+
+        ctx.save();
+        ctx.translate(W / 2, H / 2);
+        ctx.scale(scaleX, 1);
+
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(digit, W / 2, H / 2);
+        ctx.fillText(digit, 0, 0);
+
+        if (strokeWidthPx > 0) {
+          ctx.globalCompositeOperation = 'destination-over';
+          ctx.lineWidth = strokeWidthPx * 2;
+          ctx.lineJoin = 'miter';
+          ctx.miterLimit = 2;
+          ctx.strokeStyle = '#ffffff';
+          ctx.strokeText(digit, 0, 0);
+        }
+        ctx.restore();
         drewPixels = true;
       }
 
@@ -234,7 +275,7 @@ function getDigitHorizontalProfile(digit: string, preset: any): HorizontalSpan[]
             for (let y = y0; y < y1; y++) {
               for (let x = 0; x < W; x++) {
                 const alpha = data[(y * W + x) * 4 + 3];
-                if (alpha > 20) {
+                if (alpha > 12) {
                   if (x < minX) minX = x;
                   if (x > maxX) maxX = x;
                 }
@@ -252,28 +293,31 @@ function getDigitHorizontalProfile(digit: string, preset: any): HorizontalSpan[]
             }
           }
 
-          if (nonEmptyCount >= 8) {
+          if (nonEmptyCount >= 12) {
             digitProfileCache.set(cacheKey, slices);
             return slices;
           }
         } catch (_) {
-          // Cross-origin image tainted canvas; fall back to geometric profile
+          // Cross-origin image tainted canvas; fall back to serif-safe geometric profile
         }
       }
     }
   }
 
-  // Geometric athletic jersey '7' silhouette (conservative safe envelope)
+  // Serif-aware athletic jersey '7' silhouette fallback
   const fallback: HorizontalSpan[] = [];
   for (let s = 0; s < PROFILE_SLICES; s++) {
     const t = (s + 0.5) / PROFILE_SLICES;
     if (digit === '7') {
       if (t <= 0.25) {
         fallback.push({ xMinFrac: 0.0, xMaxFrac: 1.0 });
+      } else if (t >= 0.84) {
+        // Bottom serif allowance so 0°/180° corners never graze before async image loads
+        fallback.push({ xMinFrac: 0.0, xMaxFrac: 0.62 });
       } else {
         const p = (t - 0.25) / 0.75;
-        const xMinFrac = Math.max(0.0, 0.50 * (1 - p) - 0.02);
-        const xMaxFrac = Math.min(1.0, 0.98 - 0.52 * p + 0.02);
+        const xMinFrac = Math.max(0.0, 0.50 * (1 - p) - 0.04);
+        const xMaxFrac = Math.min(1.0, 0.98 - 0.46 * p + 0.04);
         fallback.push({ xMinFrac, xMaxFrac });
       }
     } else {
@@ -281,42 +325,236 @@ function getDigitHorizontalProfile(digit: string, preset: any): HorizontalSpan[]
     }
   }
 
-  digitProfileCache.set(cacheKey, fallback);
+  // Do not permanently cache un-loaded URL fallbacks so real pixels take effect once loaded
+  if (!assetUrl) {
+    digitProfileCache.set(cacheKey, fallback);
+  }
   return fallback;
 }
 
 /**
- * Evaluates horizontal occupied interval [leftX, rightX] of digit item at normalized global Y slice
- * accounting for 0° vs 180° orientation.
+ * Returns a 48-slice horizontal occupancy profile for a straight name item
+ * (used strictly for A' 0°/180° apostrophe-pocket interlocking).
  */
-function getItemSliceXSpan(
-  bboxX: number,
-  bboxY: number,
-  w: number,
-  h: number,
-  rotationDeg: number,
-  digit: string,
+function getNameHorizontalProfile(
+  name: string,
   preset: any,
-  queryY: number
+  wInches: number,
+  hInches: number
+): HorizontalSpan[] {
+  const cleanName = (name || '').trim();
+  const fontFamily = preset?.fontFamily || 'Oswald';
+  const rawStroke = typeof preset?.strokeWidth === 'number' ? preset.strokeWidth : 0;
+  const userSpacing = typeof preset?.letterSpacing === 'number' ? preset.letterSpacing : 3;
+  const letterAssets = preset?.letterAssets || {};
+  const tokens = tokenizeNameCharacters(cleanName);
+  const hasLetterAssets = tokens.some((c) => c !== ' ' && Boolean(letterAssets[c]));
+  const assetSig = hasLetterAssets
+    ? tokens.map((c) => (letterAssets[c] ? letterAssets[c].slice(0, 24) : c)).join(',')
+    : '';
+  const H = 96;
+  const W = Math.max(48, Math.round(H * Math.max(0.4, wInches / Math.max(0.5, hInches))));
+  const cacheKey = `${cleanName}|${fontFamily}|${rawStroke}|${userSpacing}|${assetSig}|${W}x${H}`;
+
+  const cached = nameProfileCache.get(cacheKey);
+  if (cached) return cached;
+
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+
+    if (ctx) {
+      let drewPixels = false;
+      const scalePerInch = H / Math.max(0.5, hInches);
+      const letterGapPx = Math.max(1, userSpacing * (scalePerInch / 30));
+
+      if (hasLetterAssets) {
+        const spaceWidthPx = H * 0.22;
+        const charWidths: number[] = [];
+        let allLoaded = true;
+
+        tokens.forEach((c) => {
+          if (c === ' ') {
+            charWidths.push(spaceWidthPx);
+          } else {
+            const url = letterAssets[c];
+            const effectiveCharH = c === '.' && url ? H * DOT_HEIGHT_RATIO : H;
+            const img = url ? getLoadedImage(url) : null;
+            if (url && (!img || !img.complete || img.naturalWidth === 0)) {
+              allLoaded = false;
+            }
+            if (img && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+              charWidths.push(effectiveCharH * (img.naturalWidth / img.naturalHeight));
+            } else {
+              const cachedRatio = url ? getCachedAssetAspectRatio(url) : null;
+              charWidths.push(cachedRatio ? effectiveCharH * cachedRatio : H * getDefaultLetterRatio(c));
+            }
+          }
+        });
+
+        if (allLoaded) {
+          let rawTotalW = 0;
+          charWidths.forEach((cw, i) => {
+            rawTotalW += cw;
+            if (i < charWidths.length - 1 && tokens[i] !== ' ' && tokens[i + 1] !== ' ') {
+              rawTotalW += letterGapPx;
+            } else if (i < charWidths.length - 1 && (tokens[i] === ' ' || tokens[i + 1] === ' ')) {
+              rawTotalW += letterGapPx * 0.25;
+            }
+          });
+          const scaleX = rawTotalW > 0 ? W / rawTotalW : 1;
+          let curX = Math.max(0, (W - rawTotalW * scaleX) / 2);
+
+          try {
+            ctx.clearRect(0, 0, W, H);
+            tokens.forEach((c, i) => {
+              const cW = charWidths[i] * scaleX;
+              if (c !== ' ') {
+                const url = letterAssets[c];
+                const img = url ? getLoadedImage(url) : null;
+                if (img && img.complete && img.naturalWidth > 0) {
+                  if (c === '.') {
+                    const dotH = H * DOT_HEIGHT_RATIO;
+                    ctx.drawImage(img, curX, H - dotH, cW, dotH);
+                  } else {
+                    ctx.drawImage(img, curX, 0, cW, H);
+                  }
+                } else {
+                  ctx.fillStyle = '#ffffff';
+                  ctx.font = `700 ${H * 0.85}px "${fontFamily}", sans-serif`;
+                  ctx.textAlign = 'center';
+                  ctx.textBaseline = 'middle';
+                  ctx.fillText(c, curX + cW / 2, H / 2);
+                }
+              }
+              const gapAfter =
+                i < tokens.length - 1
+                  ? c === ' ' || tokens[i + 1] === ' '
+                    ? letterGapPx * 0.25 * scaleX
+                    : letterGapPx * scaleX
+                  : 0;
+              curX += cW + gapAfter;
+            });
+            drewPixels = true;
+          } catch (_) {
+            drewPixels = false;
+          }
+        }
+      } else {
+        ctx.clearRect(0, 0, W, H);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const fontSize = H * 0.95;
+        ctx.font = `700 ${fontSize}px "${fontFamily}", "Bebas Neue", "Oswald", sans-serif`;
+        if ('letterSpacing' in ctx) {
+          (ctx as any).letterSpacing = `${letterGapPx}px`;
+        }
+        const strokeWidthPx = rawStroke > 0 ? rawStroke * (scalePerInch / 30) : 0;
+        const metrics = ctx.measureText(cleanName);
+        const measuredW = metrics.width || W;
+        const scaleX = measuredW > 0 ? W / measuredW : 1;
+
+        ctx.save();
+        ctx.translate(W / 2, H / 2);
+        ctx.scale(scaleX, 1);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(cleanName, 0, 0);
+        if (strokeWidthPx > 0) {
+          ctx.globalCompositeOperation = 'destination-over';
+          ctx.lineWidth = strokeWidthPx * 2;
+          ctx.lineJoin = 'miter';
+          ctx.miterLimit = 2;
+          ctx.strokeStyle = '#ffffff';
+          ctx.strokeText(cleanName, 0, 0);
+        }
+        ctx.restore();
+        drewPixels = true;
+      }
+
+      if (drewPixels) {
+        try {
+          const data = ctx.getImageData(0, 0, W, H).data;
+          const slices: HorizontalSpan[] = [];
+          let nonEmptyCount = 0;
+
+          for (let s = 0; s < PROFILE_SLICES; s++) {
+            const y0 = Math.floor((s / PROFILE_SLICES) * H);
+            const y1 = Math.max(y0 + 1, Math.floor(((s + 1) / PROFILE_SLICES) * H));
+            let minX = W;
+            let maxX = -1;
+
+            for (let y = y0; y < y1; y++) {
+              for (let x = 0; x < W; x++) {
+                const alpha = data[(y * W + x) * 4 + 3];
+                if (alpha > 12) {
+                  if (x < minX) minX = x;
+                  if (x > maxX) maxX = x;
+                }
+              }
+            }
+
+            if (maxX >= minX) {
+              nonEmptyCount++;
+              slices.push({ xMinFrac: minX / W, xMaxFrac: (maxX + 1) / W });
+            } else {
+              slices.push({ xMinFrac: 0.5, xMaxFrac: 0.5, empty: true });
+            }
+          }
+
+          if (nonEmptyCount >= 12) {
+            nameProfileCache.set(cacheKey, slices);
+            return slices;
+          }
+        } catch (_) {
+          // Cross-origin PNG fallback below
+        }
+      }
+    }
+  }
+
+  // Fallback geometry when custom A' PNG hasn't finished loading yet
+  const fallback: HorizontalSpan[] = [];
+  const endsWithAp = tokens[tokens.length - 1] === "A'";
+  const startsWithAp = tokens[0] === "A'";
+  const apSetback = Math.min(0.18, 0.24 / Math.max(2, tokens.length));
+
+  for (let s = 0; s < PROFILE_SLICES; s++) {
+    const t = (s + 0.5) / PROFILE_SLICES;
+    const xMinFrac = startsWithAp && t > 0.42 ? apSetback : 0.0;
+    const xMaxFrac = endsWithAp && t > 0.42 ? 1.0 - apSetback : 1.0;
+    fallback.push({ xMinFrac, xMaxFrac });
+  }
+
+  if (!hasLetterAssets) {
+    nameProfileCache.set(cacheKey, fallback);
+  }
+  return fallback;
+}
+
+/**
+ * Evaluates horizontal occupied interval [minX, maxX] of a profile at a specific local slice index
+ * accounting for 0° vs 180° rotation.
+ */
+function getProfileSliceSpanByIndex(
+  profile: HorizontalSpan[],
+  bboxX: number,
+  w: number,
+  rotationDeg: number,
+  sliceIdx: number
 ): { minX: number; maxX: number } | null {
-  if (queryY < bboxY || queryY > bboxY + h) return null;
-  const profile = getDigitHorizontalProfile(digit, preset);
-  const t = Math.max(0, Math.min(0.9999, (queryY - bboxY) / Math.max(0.01, h)));
   const normRot = ((rotationDeg % 360) + 360) % 360;
+  const idx = normRot === 180 ? PROFILE_SLICES - 1 - sliceIdx : sliceIdx;
+  const span = profile[Math.max(0, Math.min(PROFILE_SLICES - 1, idx))];
+  if (!span || span.empty) return null;
 
   if (normRot === 180) {
-    const idx = PROFILE_SLICES - 1 - Math.floor(t * PROFILE_SLICES);
-    const span = profile[Math.max(0, Math.min(PROFILE_SLICES - 1, idx))];
-    if (span.empty) return null;
     return {
       minX: bboxX + (1 - span.xMaxFrac) * w,
       maxX: bboxX + (1 - span.xMinFrac) * w,
     };
   }
-
-  const idx = Math.floor(t * PROFILE_SLICES);
-  const span = profile[Math.max(0, Math.min(PROFILE_SLICES - 1, idx))];
-  if (span.empty) return null;
   return {
     minX: bboxX + span.xMinFrac * w,
     maxX: bboxX + span.xMaxFrac * w,
@@ -324,8 +562,102 @@ function getItemSliceXSpan(
 }
 
 /**
- * Computes minimum safe X offset (dx) to place item B ('7' at rotB) to the right of item A ('7' at rotA)
- * while maintaining full ink + cut clearance across all vertical slices.
+ * Exact 2D Euclidean distance clearance solver between two profiled items (A on left, B on right).
+ * Checks ALL (sliceA, sliceB) pairs within |dy| < safeGap so diagonal strokes and serif corners
+ * never graze or overlap while avoiding unnecessary empty gaps.
+ */
+function computeProfile2DInterlockDx(
+  profA: HorizontalSpan[],
+  aW: number,
+  aH: number,
+  aRot: number,
+  profB: HorizontalSpan[],
+  bW: number,
+  bH: number,
+  bRot: number,
+  yOffsetBRelToA: number,
+  safeGap: number
+): number {
+  const sliceHA = aH / PROFILE_SLICES;
+  const sliceHB = bH / PROFILE_SLICES;
+  let requiredDx = -Infinity;
+
+  for (let sA = 0; sA < PROFILE_SLICES; sA++) {
+    const spanA = getProfileSliceSpanByIndex(profA, 0, aW, aRot, sA);
+    if (!spanA) continue;
+    const aTop = sA * sliceHA;
+    const aBot = (sA + 1) * sliceHA;
+
+    for (let sB = 0; sB < PROFILE_SLICES; sB++) {
+      const bTop = yOffsetBRelToA + sB * sliceHB;
+      const bBot = yOffsetBRelToA + (sB + 1) * sliceHB;
+      const dy = aBot < bTop ? bTop - aBot : bBot < aTop ? aTop - bBot : 0;
+      if (dy >= safeGap) continue;
+
+      const spanB = getProfileSliceSpanByIndex(profB, 0, bW, bRot, sB);
+      if (!spanB) continue;
+
+      const horizClear = Math.sqrt(Math.max(0, safeGap * safeGap - dy * dy));
+      const needed = spanA.maxX - spanB.minX + horizClear;
+      if (needed > requiredDx) requiredDx = needed;
+    }
+  }
+
+  if (!Number.isFinite(requiredDx)) {
+    return parseFloat((aW + safeGap).toFixed(2));
+  }
+  return parseFloat(Math.max(0.15 * aW, Math.min(aW + safeGap, requiredDx)).toFixed(2));
+}
+
+/**
+ * Checks if two already-placed profiled items violate minimum 2D Euclidean contour clearance.
+ */
+function hasProfile2DCollision(
+  profA: HorizontalSpan[],
+  aX: number,
+  aY: number,
+  aW: number,
+  aH: number,
+  aRot: number,
+  profB: HorizontalSpan[],
+  bX: number,
+  bY: number,
+  bW: number,
+  bH: number,
+  bRot: number,
+  minClearance: number
+): boolean {
+  const sliceHA = aH / PROFILE_SLICES;
+  const sliceHB = bH / PROFILE_SLICES;
+
+  for (let sA = 0; sA < PROFILE_SLICES; sA++) {
+    const spanA = getProfileSliceSpanByIndex(profA, aX, aW, aRot, sA);
+    if (!spanA) continue;
+    const aTop = aY + sA * sliceHA;
+    const aBot = aY + (sA + 1) * sliceHA;
+
+    for (let sB = 0; sB < PROFILE_SLICES; sB++) {
+      const bTop = bY + sB * sliceHB;
+      const bBot = bY + (sB + 1) * sliceHB;
+      const dy = aBot < bTop ? bTop - aBot : bBot < aTop ? aTop - bBot : 0;
+      if (dy >= minClearance) continue;
+
+      const spanB = getProfileSliceSpanByIndex(profB, bX, bW, bRot, sB);
+      if (!spanB) continue;
+
+      const dx = spanA.maxX < spanB.minX ? spanB.minX - spanA.maxX : spanB.maxX < spanA.minX ? spanA.minX - spanB.maxX : 0;
+      if (dx * dx + dy * dy < minClearance * minClearance) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Computes minimum safe X offset (dx) to place '7' B (at bRot) to the right of '7' A (at aRot)
+ * maintaining full 2D Euclidean contour clearance across all vertical slices and serif corners.
  */
 function computeInterlocked7Dx(
   aW: number,
@@ -337,33 +669,365 @@ function computeInterlocked7Dx(
   bRot: number,
   bPreset: any,
   yOffsetBRelativeToA: number,
-  margin: number
+  safeCutGap: number
 ): number {
-  const safeGap = Math.max(margin * 1.25, 0.22);
-  let requiredDx = 0.50 * aW + safeGap;
+  const profA = getDigitHorizontalProfile('7', aPreset, aW / Math.max(0.5, aH));
+  const profB = getDigitHorizontalProfile('7', bPreset, bW / Math.max(0.5, bH));
+  return computeProfile2DInterlockDx(profA, aW, aH, aRot, profB, bW, bH, bRot, yOffsetBRelativeToA, safeCutGap);
+}
 
-  for (let s = 0; s < PROFILE_SLICES; s++) {
-    const queryY = ((s + 0.5) / PROFILE_SLICES) * aH;
-    const spanA = getItemSliceXSpan(0, 0, aW, aH, aRot, '7', aPreset, queryY);
-    const spanB = getItemSliceXSpan(0, yOffsetBRelativeToA, bW, bH, bRot, '7', bPreset, queryY);
-    if (spanA && spanB) {
-      const needed = spanA.maxX - spanB.minX + safeGap;
-      if (needed > requiredDx) requiredDx = needed;
+/**
+ * Computes minimum safe X offset (dx) to interlock two consecutive A' names (0° followed by 180°).
+ */
+function computeInterlockedApDx(
+  aName: string,
+  aW: number,
+  aH: number,
+  aPreset: any,
+  bName: string,
+  bW: number,
+  bH: number,
+  bPreset: any,
+  yOffsetBRelativeToA: number,
+  safeCutGap: number
+): number {
+  const profA = getNameHorizontalProfile(aName, aPreset, aW, aH);
+  const profB = getNameHorizontalProfile(bName, bPreset, bW, bH);
+  return computeProfile2DInterlockDx(profA, aW, aH, 0, profB, bW, bH, 180, yOffsetBRelativeToA, safeCutGap);
+}
+
+interface GlyphOBB {
+  cx: number;
+  cy: number;
+  ux: number; // local X unit axis (cos, sin)
+  uy: number;
+  vx: number; // local Y unit axis (-sin, cos)
+  vy: number;
+  hw: number; // half width in inches
+  hh: number; // half height in inches
+  corners: [number, number][];
+}
+
+interface XColumnSpan {
+  x0: number;
+  x1: number;
+  topY: number;
+  bottomY: number;
+}
+
+const curvedGlyphMeasureCanvas =
+  typeof document !== 'undefined' ? document.createElement('canvas') : null;
+
+/**
+ * Builds local-coordinate oriented glyph bounding boxes (in inches relative to item top-left)
+ * for a curved/arched name, matching canvasRenderer & textMeasurement geometry.
+ */
+function getCurvedGlyphOBBs(
+  name: string,
+  preset: any,
+  itemWidth: number,
+  itemHeight: number,
+  capHeightInches?: number
+): GlyphOBB[] {
+  const cleanText = (name || '').trim();
+  if (!cleanText) return [];
+
+  const scaleDpi = 300;
+  const fallbackCapH = preset?.defaultNameHeightInches || 2.2;
+  const refCapH =
+    typeof capHeightInches === 'number' && capHeightInches > 0
+      ? capHeightInches
+      : Math.min(itemHeight * 0.72, fallbackCapH);
+  const hPx = refCapH * scaleDpi;
+
+  const letterAssets = preset?.letterAssets || {};
+  const tokens = tokenizeNameCharacters(cleanText);
+  const hasLetterAssets = tokens.some((c) => c !== ' ' && Boolean(letterAssets[c]));
+  const userSpacing = typeof preset?.letterSpacing === 'number' ? preset.letterSpacing : 3;
+  const letterGapPx = Math.max(2, userSpacing * (scaleDpi / 30));
+  const arcDegrees =
+    typeof preset?.arcCurvature === 'number'
+      ? preset.arcCurvature
+      : typeof preset?.arcAmount === 'number'
+      ? preset.arcAmount
+      : 24;
+
+  let activeTokens = tokens;
+  const charWidthsPx: number[] = [];
+  let glyphExtentsPx: CurvedGlyphExtent[] | undefined;
+  let glyphHeightPx = hPx;
+  let strokeWidthPx = 0;
+
+  if (hasLetterAssets) {
+    const spaceWidthPx = hPx * 0.22;
+    tokens.forEach((c) => {
+      if (c === ' ') {
+        charWidthsPx.push(spaceWidthPx);
+      } else {
+        const url = letterAssets[c];
+        const effectiveCharH = c === '.' && url ? hPx * DOT_HEIGHT_RATIO : hPx;
+        const cachedRatio = url ? getCachedAssetAspectRatio(url) : null;
+        if (cachedRatio) {
+          charWidthsPx.push(effectiveCharH * cachedRatio);
+        } else {
+          charWidthsPx.push(hPx * getDefaultLetterRatio(c));
+        }
+      }
+    });
+  } else {
+    const fontName = preset?.fontFamily || 'Oswald';
+    const fontSize = hPx * 0.95;
+    glyphHeightPx = fontSize;
+    const rawStroke = typeof preset?.strokeWidth === 'number' ? preset.strokeWidth : 0;
+    strokeWidthPx = rawStroke > 0 ? rawStroke * (scaleDpi / 30) : 0;
+    const rawChars = cleanText.split('');
+    activeTokens = rawChars;
+
+    const ctx = curvedGlyphMeasureCanvas?.getContext('2d');
+    if (ctx) {
+      ctx.font = `700 ${fontSize}px "${fontName}", "Oswald", "Bebas Neue", "Anton", sans-serif`;
+      if ('letterSpacing' in ctx) {
+        (ctx as any).letterSpacing = '0px';
+      }
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      glyphExtentsPx = [];
+
+      rawChars.forEach((ch) => {
+        if (ch === ' ') {
+          const spW = fontSize * 0.28;
+          charWidthsPx.push(spW);
+          glyphExtentsPx!.push({
+            leftPx: spW / 2,
+            rightPx: spW / 2,
+            topPx: fontSize * 0.48,
+            bottomPx: fontSize * 0.48,
+          });
+          return;
+        }
+        const m = ctx.measureText(ch);
+        const advW = m.width || fontSize * 0.5;
+        const leftPx = Math.max(advW / 2, m.actualBoundingBoxLeft || advW / 2);
+        const rightPx = Math.max(advW / 2, m.actualBoundingBoxRight || advW / 2);
+        const topPx = Math.max(fontSize * 0.5, m.actualBoundingBoxAscent || fontSize * 0.5);
+        const bottomPx = Math.max(fontSize * 0.5, m.actualBoundingBoxDescent || fontSize * 0.5);
+        charWidthsPx.push(Math.max(advW, leftPx + rightPx));
+        glyphExtentsPx!.push({ leftPx, rightPx, topPx, bottomPx });
+      });
+    } else {
+      rawChars.forEach((ch) => {
+        charWidthsPx.push(ch === ' ' ? fontSize * 0.28 : fontSize * getDefaultLetterRatio(ch));
+      });
     }
   }
 
-  // Also sample B's slices near corners
-  for (let s = 0; s < PROFILE_SLICES; s++) {
-    const queryY = yOffsetBRelativeToA + ((s + 0.5) / PROFILE_SLICES) * bH;
-    const spanA = getItemSliceXSpan(0, 0, aW, aH, aRot, '7', aPreset, queryY);
-    const spanB = getItemSliceXSpan(0, yOffsetBRelativeToA, bW, bH, bRot, '7', bPreset, queryY);
-    if (spanA && spanB) {
-      const needed = spanA.maxX - spanB.minX + safeGap;
-      if (needed > requiredDx) requiredDx = needed;
+  const layout = computeCurvedTextLayout({
+    tokens: activeTokens,
+    charWidthsPx,
+    glyphExtentsPx,
+    letterGapPx,
+    glyphHeightPx,
+    arcDegrees,
+    strokeWidthPx,
+    padPx: 0.04 * scaleDpi,
+  });
+
+  const fitScaleX = itemWidth / Math.max(1, layout.boxWidthPx);
+  const fitScaleY = itemHeight / Math.max(1, layout.boxHeightPx);
+  // Real stroke edge overhang around glyphs
+  const strokePadPx = strokeWidthPx > 0 ? strokeWidthPx * 1.05 : 0;
+
+  const obbs: GlyphOBB[] = [];
+
+  layout.glyphs.forEach((g, idx) => {
+    if (g.token === ' ') return;
+    const ext = glyphExtentsPx?.[idx];
+    const halfLeft = ((ext ? ext.leftPx : g.charWidthPx / 2) + strokePadPx) * fitScaleX;
+    const halfRight = ((ext ? ext.rightPx : g.charWidthPx / 2) + strokePadPx) * fitScaleX;
+    const halfTop = ((ext ? ext.topPx : glyphHeightPx / 2) + strokePadPx) * fitScaleY;
+    const halfBot = ((ext ? ext.bottomPx : glyphHeightPx / 2) + strokePadPx) * fitScaleY;
+
+    const localMidX = (halfRight - halfLeft) / 2;
+    const localMidY = (halfBot - halfTop) / 2;
+    const hw = (halfLeft + halfRight) / 2;
+    const hh = (halfTop + halfBot) / 2;
+
+    const cosA = Math.cos(g.angleRad);
+    const sinA = Math.sin(g.angleRad);
+    const cx = g.cx * fitScaleX + localMidX * cosA - localMidY * sinA;
+    const cy = g.cy * fitScaleY + localMidX * sinA + localMidY * cosA;
+
+    const corners: [number, number][] = [
+      [cx - hw * cosA + hh * sinA, cy - hw * sinA - hh * cosA],
+      [cx + hw * cosA + hh * sinA, cy + hw * sinA - hh * cosA],
+      [cx + hw * cosA - hh * sinA, cy + hw * sinA + hh * cosA],
+      [cx - hw * cosA - hh * sinA, cy - hw * sinA + hh * cosA],
+    ];
+
+    obbs.push({
+      cx,
+      cy,
+      ux: cosA,
+      uy: sinA,
+      vx: -sinA,
+      vy: cosA,
+      hw,
+      hh,
+      corners,
+    });
+  });
+
+  return obbs;
+}
+
+/**
+ * Rasterizes curved glyph OBBs into exact X-slab vertical occupancy intervals [topY, bottomY].
+ */
+function rasterizeCurvedArchYSpanProfile(
+  itemWidth: number,
+  obbs: GlyphOBB[],
+  numBins: number = 48
+): XColumnSpan[] {
+  const bins: XColumnSpan[] = [];
+  const binW = itemWidth / numBins;
+
+  for (let b = 0; b < numBins; b++) {
+    const x0 = b * binW;
+    const x1 = (b + 1) * binW;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    for (const obb of obbs) {
+      const pts = obb.corners;
+      for (let e = 0; e < 4; e++) {
+        const [ax, ay] = pts[e];
+        const [bx, by] = pts[(e + 1) % 4];
+        const eMinX = Math.min(ax, bx);
+        const eMaxX = Math.max(ax, bx);
+        if (eMaxX < x0 || eMinX > x1) continue;
+
+        if (ax >= x0 && ax <= x1) {
+          if (ay < minY) minY = ay;
+          if (ay > maxY) maxY = ay;
+        }
+        if (bx >= x0 && bx <= x1) {
+          if (by < minY) minY = by;
+          if (by > maxY) maxY = by;
+        }
+
+        const dx = bx - ax;
+        if (Math.abs(dx) > 1e-6) {
+          if ((ax < x0 && bx > x0) || (bx < x0 && ax > x0)) {
+            const t = (x0 - ax) / dx;
+            const y = ay + t * (by - ay);
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+          if ((ax < x1 && bx > x1) || (bx < x1 && ax > x1)) {
+            const t = (x1 - ax) / dx;
+            const y = ay + t * (by - ay);
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+    }
+
+    if (Number.isFinite(minY) && Number.isFinite(maxY)) {
+      bins.push({ x0, x1, topY: minY, bottomY: maxY });
     }
   }
 
-  return parseFloat(Math.min(aW + margin, requiredDx).toFixed(2));
+  return bins;
+}
+
+/**
+ * Computes minimum vertical Y coordinate at which a candidate curved row can sit
+ * safely tucked into the concave arch belly of already-placed curved items above it.
+ */
+function computeMinNestedCurvedRowY(
+  candRow: { x: number; w: number; h: number; profile: XColumnSpan[] }[],
+  placedCurved: { x: number; y: number; w: number; h: number; profile: XColumnSpan[] }[],
+  prevRowTopY: number,
+  vertGap: number,
+  minFloorY: number
+): number {
+  let reqY = minFloorY;
+
+  for (const cand of candRow) {
+    for (const placed of placedCurved) {
+      if (cand.x + cand.w + vertGap <= placed.x || cand.x >= placed.x + placed.w + vertGap) {
+        continue;
+      }
+
+      for (const cBin of cand.profile) {
+        const cx0 = cand.x + cBin.x0;
+        const cx1 = cand.x + cBin.x1;
+
+        for (const pBin of placed.profile) {
+          const px0 = placed.x + pBin.x0;
+          const px1 = placed.x + pBin.x1;
+          const dx = cx1 < px0 ? px0 - cx1 : px1 < cx0 ? cx0 - px1 : 0;
+          if (dx >= vertGap) continue;
+
+          const reqDY = Math.sqrt(Math.max(0, vertGap * vertGap - dx * dx));
+          const neededTopY = placed.y + pBin.bottomY + reqDY - cBin.topY;
+          if (neededTopY > reqY) reqY = neededTopY;
+        }
+      }
+    }
+  }
+
+  // Monotonic progression below previous row top
+  const monotonicMin = prevRowTopY + 0.35;
+  return parseFloat(Math.max(reqY, monotonicMin).toFixed(2));
+}
+
+/**
+ * 2D Separating Axis Theorem check between two oriented glyph rectangles (with safety clearance pad).
+ */
+function doGlyphOBBsOverlap(a: GlyphOBB, b: GlyphOBB, aOffX: number, aOffY: number, bOffX: number, bOffY: number, pad: number): boolean {
+  const tx = b.cx + bOffX - (a.cx + aOffX);
+  const ty = b.cy + bOffY - (a.cy + aOffY);
+  const axes: [number, number][] = [
+    [a.ux, a.uy],
+    [a.vx, a.vy],
+    [b.ux, b.uy],
+    [b.vx, b.vy],
+  ];
+
+  const aHw = a.hw + pad * 0.5;
+  const aHh = a.hh + pad * 0.5;
+  const bHw = b.hw + pad * 0.5;
+  const bHh = b.hh + pad * 0.5;
+
+  for (const [lx, ly] of axes) {
+    const distCenter = Math.abs(tx * lx + ty * ly);
+    const projA = aHw * Math.abs(a.ux * lx + a.uy * ly) + aHh * Math.abs(a.vx * lx + a.vy * ly);
+    const projB = bHw * Math.abs(b.ux * lx + b.uy * ly) + bHh * Math.abs(b.vx * lx + b.vy * ly);
+    if (distCenter >= projA + projB) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Checks whether two upright curved names truly touch glyph-to-glyph (within minClearance inches).
+ */
+function doCurvedItemsCollide(a: CanvasItem, b: CanvasItem, minClearance: number): boolean {
+  const obbsA = getCurvedGlyphOBBs(a.customerName, a.preset, a.width, a.height, a.letterCapHeightInches);
+  const obbsB = getCurvedGlyphOBBs(b.customerName, b.preset, b.width, b.height, b.letterCapHeightInches);
+  if (obbsA.length === 0 || obbsB.length === 0) return true;
+
+  for (const ga of obbsA) {
+    for (const gb of obbsB) {
+      if (doGlyphOBBsOverlap(ga, gb, a.x, a.y, b.x, b.y, minClearance)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -466,8 +1130,9 @@ export function generateAutoNestingLayout(
   settings: LayoutSettings
 ): AutoNestingResult {
   const rollWidth = settings.rollWidthInches || 39.0;
-  // Minimal safe cutting gap: minimum 0.12" (recommended 0.20"-0.25" / ~5mm)
-  const margin = Math.max(0.12, settings.marginInches ?? 0.20);
+  // Minimum safe DTF cutting clearance (~2.3mm floor when Tight is chosen, honoring wider gaps if selected)
+  const margin = Math.max(0.09, settings.marginInches ?? 0.16);
+  const safeCutGap = Math.max(0.09, margin);
   const canvasItems: CanvasItem[] = [];
   const modificationLogs: DigitSplitLogEntry[] = [];
 
@@ -670,9 +1335,111 @@ export function generateAutoNestingLayout(
       canvasItems.push(item);
     };
 
+    let lastStraightItem: CanvasItem | null = null;
+
     while (pool.length > 0) {
       const rem = maxAllowedX - currentX;
       const head = pool[0];
+
+      // Strict A' Interlock Rule: Applies ONLY when two consecutive A' straight-name items are placed.
+      // Keeps first A' upright (0°), rotates second A' by 180°, and interlocks with minimum safe cutting gap.
+      if (
+        lastStraightItem &&
+        (lastStraightItem.rotation || 0) === 0 &&
+        !lastStraightItem.interlockGroupId &&
+        isApName(lastStraightItem.customerName) &&
+        isApName(head.customerName) &&
+        Math.abs(head.h - lastStraightItem.height) <= 0.45
+      ) {
+        const yOffsetRel = (lastStraightItem.height - head.h) / 2;
+        const dx = computeInterlockedApDx(
+          lastStraightItem.customerName,
+          lastStraightItem.width,
+          lastStraightItem.height,
+          lastStraightItem.preset,
+          head.customerName,
+          head.w,
+          head.h,
+          head.preset,
+          yOffsetRel,
+          safeCutGap
+        );
+        const candRightEdge = lastStraightItem.x + dx + head.w;
+        const minSafeLeftX = lastStraightItem.x + Math.max(0.45 * lastStraightItem.width, dx);
+
+        if (
+          candRightEdge <= maxAllowedX &&
+          dx < lastStraightItem.width + safeCutGap - 0.06 &&
+          minSafeLeftX > lastStraightItem.x
+        ) {
+          pool.shift();
+          const groupId = `ilock-ap-${lastStraightItem.id}`;
+          lastStraightItem.interlockGroupId = groupId;
+          lastStraightItem.interlockRole = 'primary';
+
+          const invY = lastStraightItem.y + (lastStraightItem.height - head.h) / 2;
+          const invItem: CanvasItem = {
+            id: head.id,
+            orderId: head.orderId,
+            itemType: 'name',
+            customerName: head.customerName,
+            number: head.number,
+            designCode: head.designCode,
+            preset: head.preset,
+            x: parseFloat((lastStraightItem.x + dx).toFixed(2)),
+            y: parseFloat(invY.toFixed(2)),
+            width: parseFloat(head.w.toFixed(2)),
+            height: parseFloat(head.h.toFixed(2)),
+            letterCapHeightInches: head.capH,
+            rotation: 180,
+            zIndex: zCounter++,
+            garmentSize: head.garmentSize,
+            isSplitNamePart: head.isSplitNamePart,
+            parentName: head.parentName,
+            partIndex: head.partIndex,
+            interlockGroupId: groupId,
+            interlockRole: 'inverted',
+          };
+          pushRowItem(invItem, head.h);
+
+          const savedW = parseFloat((lastStraightItem.width + margin - dx).toFixed(2));
+          modificationLogs.push({
+            id: `log-ilock-ap-${groupId}`,
+            orderId: invItem.orderId,
+            customerName: `${lastStraightItem.customerName} + ${invItem.customerName} (180° A')`,
+            originalNumber: head.customerName,
+            reason: 'interlock_ap_pair',
+            entryType: 'interlock',
+            digits: [
+              {
+                digit: "A'↑",
+                itemId: lastStraightItem.id,
+                x: lastStraightItem.x,
+                y: lastStraightItem.y,
+                width: lastStraightItem.width,
+                height: lastStraightItem.height,
+                shelfRowIndex: currentRowIndex,
+              },
+              {
+                digit: "A'↓",
+                itemId: invItem.id,
+                x: invItem.x,
+                y: invItem.y,
+                width: invItem.width,
+                height: invItem.height,
+                shelfRowIndex: currentRowIndex,
+              },
+            ],
+            spaceSavedInches: savedW,
+            timestamp: new Date().toLocaleTimeString(),
+          });
+
+          currentX = candRightEdge + margin;
+          if (head.h > shelfHeight) shelfHeight = head.h;
+          lastStraightItem = invItem;
+          continue;
+        }
+      }
 
       // Fits cleanly on current row (or row is fresh)
       if (head.w <= rem || currentX === margin) {
@@ -700,6 +1467,7 @@ export function generateAutoNestingLayout(
         pushRowItem(item, head.h);
         currentX += head.w + margin;
         if (head.h > shelfHeight) shelfHeight = head.h;
+        lastStraightItem = item;
         continue;
       }
 
@@ -736,6 +1504,7 @@ export function generateAutoNestingLayout(
         pushRowItem(item, chosen.h);
         currentX += chosen.w + margin;
         if (chosen.h > shelfHeight) shelfHeight = chosen.h;
+        lastStraightItem = item;
         continue;
       }
 
@@ -824,6 +1593,7 @@ export function generateAutoNestingLayout(
 
             currentX += split.part1W + margin;
             if (split.part1H > shelfHeight) shelfHeight = split.part1H;
+            lastStraightItem = p1Item;
           } else {
             pool.splice(candIdx, 0, cand);
           }
@@ -835,6 +1605,7 @@ export function generateAutoNestingLayout(
         currentY += shelfHeight + margin;
         shelfHeight = 0;
         currentRowIndex++;
+        lastStraightItem = null;
       }
     }
 
@@ -1037,8 +1808,9 @@ export function generateAutoNestingLayout(
     while (pool.length > 0) {
       const remainingRowSpace = maxAllowedRowWidth - currentX;
 
-      // Priority A: If previous item on this row is an upright un-paired '7', check if we can
-      // interlock a 180°-rotated '7' from pool right beside it along its diagonal contour!
+      // Priority A: Consistent 2D contour interlocking for '7's:
+      // - When previous item is an upright (0°) unpaired '7', rotate next matching '7' 180° and interlock cleanly
+      // - When previous item is an inverted (180°) '7' and next item is a '7', place upright (0°) at exact 2D safeCutGap
       if (
         lastRowItem &&
         lastRowItem.number === '7' &&
@@ -1059,11 +1831,11 @@ export function generateAutoNestingLayout(
             180,
             cand7.preset,
             yOffsetRel,
-            margin
+            safeCutGap
           );
 
           const candRightEdge = lastRowItem.x + dx + cand7.w;
-          if (candRightEdge <= maxAllowedRowWidth && dx < lastRowItem.width + margin) {
+          if (candRightEdge <= maxAllowedRowWidth && dx < lastRowItem.width + safeCutGap) {
             pool.splice(match7Idx, 1);
             const groupId = `ilock-${lastRowItem.id}`;
             lastRowItem.interlockGroupId = groupId;
@@ -1111,9 +1883,57 @@ export function generateAutoNestingLayout(
               timestamp: new Date().toLocaleTimeString(),
             });
 
-            currentX = candRightEdge + margin;
+            currentX = candRightEdge + safeCutGap;
             if (cand7.h > shelfHeight) shelfHeight = cand7.h;
             lastRowItem = placedInv;
+            continue;
+          }
+        }
+      } else if (
+        lastRowItem &&
+        lastRowItem.number === '7' &&
+        (lastRowItem.rotation || 0) === 180
+      ) {
+        const matchNext7Idx = findMatching7Index(lastRowItem);
+        if (matchNext7Idx !== -1) {
+          const next7 = pool[matchNext7Idx];
+          const yOffsetRel = lastRowItem.height - next7.h;
+          const dxFromInv = computeInterlocked7Dx(
+            lastRowItem.width,
+            lastRowItem.height,
+            180,
+            lastRowItem.preset,
+            next7.w,
+            next7.h,
+            0,
+            next7.preset,
+            yOffsetRel,
+            safeCutGap
+          );
+          const minSafeXFromPrev = Math.max(
+            lastRowItem.x + dxFromInv,
+            ...canvasItems
+              .filter((it) => {
+                const b = getRotatedBBox(it.x, it.y, it.width, it.height, it.rotation || 0);
+                return (
+                  b.y < currentY + next7.h + safeCutGap &&
+                  b.y + b.height + safeCutGap > currentY &&
+                  b.x <= lastRowItem!.x
+                );
+              })
+              .map((it) => {
+                if (it.id === lastRowItem!.id) return lastRowItem!.x + dxFromInv;
+                const b = getRotatedBBox(it.x, it.y, it.width, it.height, it.rotation || 0);
+                return b.x + b.width + safeCutGap;
+              })
+          );
+          const candRight = minSafeXFromPrev + next7.w;
+          if (candRight <= maxAllowedRowWidth && minSafeXFromPrev < lastRowItem.x + lastRowItem.width + safeCutGap) {
+            pool.splice(matchNext7Idx, 1);
+            const placedNext = placeNumberBlock(next7, minSafeXFromPrev, currentY, 0);
+            currentX = candRight + safeCutGap;
+            if (next7.h > shelfHeight) shelfHeight = next7.h;
+            lastRowItem = placedNext;
             continue;
           }
         }
@@ -1306,10 +2126,11 @@ export function generateAutoNestingLayout(
   }
 
   // ============================================================================
-  // 3. IMPROVED ROUND (CURVED) NAME LAYOUT: BALANCED, CENTERED & RIGHT-COLUMN POCKETS
+  // 3. IMPROVED ROUND (CURVED) NAME LAYOUT: ARCH CONTOUR VERTICAL NESTING + CENTERED BALANCE
   // ============================================================================
   if (curvedTextBlocks.length > 0) {
-    const curvedGap = Math.max(margin, 0.25);
+    const curvedHorizGap = Math.max(0.10, margin);
+    const curvedVertGap = safeCutGap;
     const maxAllowedX = rollWidth - margin;
 
     interface CurvedRow {
@@ -1328,28 +2149,26 @@ export function generateAutoNestingLayout(
         let rowW = 0;
         let rowH = 0;
 
-        // First item always goes on the row
         const first = remPool.shift()!;
         rowItems.push({ block: first, w: first.w, h: first.h });
         rowW = first.w;
         rowH = first.h;
 
-        // Greedily fill remaining row width with lookahead for shorter fitting curved names
         while (remPool.length > 0) {
-          const remSpace = usableW - rowW - curvedGap;
+          const remSpace = usableW - rowW - curvedHorizGap;
           if (remSpace <= 0) break;
 
           if (remPool[0].w <= remSpace) {
             const nxt = remPool.shift()!;
             rowItems.push({ block: nxt, w: nxt.w, h: nxt.h });
-            rowW += curvedGap + nxt.w;
+            rowW += curvedHorizGap + nxt.w;
             if (nxt.h > rowH) rowH = nxt.h;
           } else {
             const lookIdx = remPool.findIndex((b) => b.w <= remSpace);
             if (lookIdx !== -1) {
               const nxt = remPool.splice(lookIdx, 1)[0];
               rowItems.push({ block: nxt, w: nxt.w, h: nxt.h });
-              rowW += curvedGap + nxt.w;
+              rowW += curvedHorizGap + nxt.w;
               if (nxt.h > rowH) rowH = nxt.h;
             } else {
               break;
@@ -1366,13 +2185,88 @@ export function generateAutoNestingLayout(
       return rows;
     };
 
-    const fullUsableW = rollWidth - 2 * margin;
-    const baseRows = packCurvedIntoRows(curvedTextBlocks, fullUsableW);
+    // Helper: simulate arch-nested row Y coordinates and total height
+    const computeArchNestedRowLayout = (
+      rows: CurvedRow[],
+      leftBound: number,
+      rightBound: number,
+      startY: number
+    ) => {
+      const placedRecords: { x: number; y: number; w: number; h: number; profile: XColumnSpan[]; rowIndex: number }[] = [];
+      const rowPositions: { rowY: number; rowEndX: number; itemXs: number[] }[] = [];
+      const usableW = rightBound - leftBound;
+      let maxBottom = startY;
+      let prevRowY = startY - 0.35;
 
-    // Check if dedicating a narrow right-side 90° vertical column (like ALIF/SUNNY/ARAB/AIMIN/GERRARD
-    // or NAYEEM in screenshots) reduces overall curved section height without squeezing rows!
+      rows.forEach((row, rIdx) => {
+        const count = row.items.length;
+        const slack = Math.max(0, usableW - row.sumW);
+        let innerGap = curvedHorizGap;
+        if (count > 1) {
+          innerGap = Math.min(0.65, Math.max(curvedHorizGap, slack / (count + 1)));
+        }
+        const groupW = row.sumW + Math.max(0, count - 1) * innerGap;
+        const sideSpace = Math.max(0, (usableW - groupW) / 2);
+
+        let px = leftBound + sideSpace;
+        const itemXs: number[] = [];
+        const candSpecs = row.items.map((entry) => {
+          const x = parseFloat(px.toFixed(2));
+          itemXs.push(x);
+          px += entry.w + innerGap;
+          const obbs = getCurvedGlyphOBBs(
+            entry.block.customerName,
+            entry.block.preset,
+            entry.w,
+            entry.h,
+            entry.block.capH
+          );
+          const profile = rasterizeCurvedArchYSpanProfile(entry.w, obbs, 48);
+          return { x, w: entry.w, h: entry.h, profile };
+        });
+
+        const rowY =
+          rIdx === 0
+            ? startY
+            : computeMinNestedCurvedRowY(candSpecs, placedRecords, prevRowY, curvedVertGap, startY);
+
+        candSpecs.forEach((spec) => {
+          placedRecords.push({
+            x: spec.x,
+            y: rowY,
+            w: spec.w,
+            h: spec.h,
+            profile: spec.profile,
+            rowIndex: rIdx,
+          });
+          if (rowY + spec.h > maxBottom) {
+            maxBottom = rowY + spec.h;
+          }
+        });
+
+        prevRowY = rowY;
+        rowPositions.push({
+          rowY,
+          rowEndX: leftBound + sideSpace + groupW,
+          itemXs,
+        });
+      });
+
+      return {
+        rowPositions,
+        totalHeight: Math.max(0, maxBottom - startY),
+        maxBottomY: maxBottom,
+      };
+    };
+
+    const fullUsableW = rollWidth - 2 * margin;
+    const curvedSectionStartY = currentY;
+    const baseRows = packCurvedIntoRows(curvedTextBlocks, fullUsableW);
+    const baseLayout = computeArchNestedRowLayout(baseRows, margin, maxAllowedX, curvedSectionStartY);
+
     let bestPlan: {
       mainRows: CurvedRow[];
+      mainLayout: ReturnType<typeof computeArchNestedRowLayout>;
       sideItems: UnpackedBlock[];
       sideColStartX: number;
       mainLeftBound: number;
@@ -1380,44 +2274,40 @@ export function generateAutoNestingLayout(
       totalHeight: number;
     } | null = null;
 
-    const baseTotalH = baseRows.reduce((acc, r, idx) => acc + r.height + (idx > 0 ? curvedGap : 0), 0);
-
-    // Evaluate vertical right-column candidate if we have >= 4 curved names
     if (curvedTextBlocks.length >= 4) {
       const maxCurvedThick = Math.max(...curvedTextBlocks.map((b) => b.h));
       const candidateColW = maxCurvedThick;
       const sideColStartX = rollWidth - margin - candidateColW;
-      const reducedMainW = sideColStartX - curvedGap - margin;
+      const reducedMainW = sideColStartX - curvedHorizGap - margin;
 
       if (reducedMainW >= 18.0) {
-        // Test splitting k tail items (1..floor(N/2)) into the vertical right column
         for (let tailCount = 1; tailCount <= Math.floor(curvedTextBlocks.length / 2); tailCount++) {
           const mainPool = curvedTextBlocks.slice(0, curvedTextBlocks.length - tailCount);
           const sidePool = curvedTextBlocks.slice(curvedTextBlocks.length - tailCount);
 
-          // Ensure every mainPool item can fit inside reducedMainW
           if (mainPool.some((b) => b.w > reducedMainW)) continue;
 
           const trialRows = packCurvedIntoRows(mainPool, reducedMainW);
-          const trialMainH = trialRows.reduce(
-            (acc, r, idx) => acc + r.height + (idx > 0 ? curvedGap : 0),
-            0
+          const trialLayout = computeArchNestedRowLayout(
+            trialRows,
+            margin,
+            sideColStartX - curvedHorizGap,
+            curvedSectionStartY
           );
           const trialSideH = sidePool.reduce(
-            (acc, b, idx) => acc + b.w + (idx > 0 ? curvedGap : 0),
+            (acc, b, idx) => acc + b.w + (idx > 0 ? curvedHorizGap : 0),
             0
           );
 
-          // Only use side column if the side items stack completely within (or tightly match) main rows height
-          // AND total curved section height is meaningfully smaller than baseTotalH
-          const effectiveTotalH = Math.max(trialMainH, trialSideH);
-          if (effectiveTotalH + 0.5 < baseTotalH && (!bestPlan || effectiveTotalH < bestPlan.totalHeight)) {
+          const effectiveTotalH = Math.max(trialLayout.totalHeight, trialSideH);
+          if (effectiveTotalH + 0.5 < baseLayout.totalHeight && (!bestPlan || effectiveTotalH < bestPlan.totalHeight)) {
             bestPlan = {
               mainRows: trialRows,
+              mainLayout: trialLayout,
               sideItems: sidePool,
               sideColStartX,
               mainLeftBound: margin,
-              mainRightBound: sideColStartX - curvedGap,
+              mainRightBound: sideColStartX - curvedHorizGap,
               totalHeight: effectiveTotalH,
             };
           }
@@ -1426,33 +2316,19 @@ export function generateAutoNestingLayout(
     }
 
     const activeRows = bestPlan ? bestPlan.mainRows : baseRows;
-    const activeLeftBound = bestPlan ? bestPlan.mainLeftBound : margin;
-    const activeRightBound = bestPlan ? bestPlan.mainRightBound : maxAllowedX;
+    const activeLayout = bestPlan ? bestPlan.mainLayout : baseLayout;
 
-    // Track last row geometry in case extra designs (e.g. chest numbers / remaining items) fit
-    let lastCurvedRowY = currentY;
+    let lastCurvedRowY = curvedSectionStartY;
     let lastCurvedRowH = 0;
-    let lastCurvedRowEndX = activeLeftBound;
+    let lastCurvedRowEndX = bestPlan ? bestPlan.mainLeftBound : margin;
 
     activeRows.forEach((row, rIdx) => {
       const isLastRow = rIdx === activeRows.length - 1;
-      const usableW = activeRightBound - activeLeftBound;
-      const count = row.items.length;
-      const slack = Math.max(0, usableW - row.sumW);
+      const pos = activeLayout.rowPositions[rIdx];
 
-      // Compute symmetric balanced spacing on both sides
-      let innerGap = curvedGap;
-      if (count > 1) {
-        innerGap = Math.min(0.80, Math.max(curvedGap, slack / (count + 1)));
-      }
-      const groupW = row.sumW + Math.max(0, count - 1) * innerGap;
-      const sideSpace = Math.max(0, (usableW - groupW) / 2);
-
-      let px = activeLeftBound + sideSpace;
-
-      row.items.forEach((entry) => {
-        // Vertically center items of slightly varying curvature inside their row
-        const itemY = currentY + (row.height - entry.h) / 2;
+      row.items.forEach((entry, iIdx) => {
+        const px = pos.itemXs[iIdx];
+        const itemY = pos.rowY;
         canvasItems.push({
           id: entry.block.id,
           orderId: entry.block.orderId,
@@ -1470,25 +2346,23 @@ export function generateAutoNestingLayout(
           zIndex: zCounter++,
           garmentSize: entry.block.garmentSize,
         });
-        px += entry.w + innerGap;
       });
 
       if (isLastRow) {
-        lastCurvedRowY = currentY;
+        lastCurvedRowY = pos.rowY;
         lastCurvedRowH = row.height;
-        lastCurvedRowEndX = activeLeftBound + sideSpace + groupW;
+        lastCurvedRowEndX = pos.rowEndX;
       }
-
-      currentY += row.height + curvedGap;
     });
 
-    // Place vertical 90°-rotated curved names in right column (balanced vertically)
+    currentY = activeLayout.maxBottomY + curvedVertGap;
+
+    // Place vertical 90°-rotated curved names in right column starting cleanly from curvedSectionStartY
     if (bestPlan && bestPlan.sideItems.length > 0) {
-      let sideY = currentY - activeRows.reduce((a, r) => a + r.height + curvedGap, 0);
+      let sideY = curvedSectionStartY;
       const sideColW = maxAllowedX - bestPlan.sideColStartX;
 
       bestPlan.sideItems.forEach((sb) => {
-        // Center horizontally inside the dedicated right column
         const targetX = bestPlan!.sideColStartX + (sideColW - sb.h) / 2;
         const coords = itemCoordsForAABBTopLeft(targetX, sideY, sb.w, sb.h, 90);
         canvasItems.push({
@@ -1508,7 +2382,7 @@ export function generateAutoNestingLayout(
           zIndex: zCounter++,
           garmentSize: sb.garmentSize,
         });
-        sideY += sb.w + curvedGap;
+        sideY += sb.w + curvedHorizGap;
       });
 
       if (sideY > currentY) {
@@ -1519,7 +2393,7 @@ export function generateAutoNestingLayout(
     // If extra space remains on the right of the last curved row (and there are small chest numbers waiting),
     // tuck fitting chest numbers neatly into that open space if safe
     if (smallChestNumberBlocks.length > 0 && !bestPlan) {
-      const availX = lastCurvedRowEndX + curvedGap;
+      const availX = lastCurvedRowEndX + curvedHorizGap;
       const availW = maxAllowedX - availX;
       if (availW >= 2.0) {
         let tx = availX;
@@ -1684,8 +2558,8 @@ export function generateAutoNestingLayout(
 }
 
 /**
- * Detect Collision between canvas items using full rotated AABBs and contour-aware
- * silhouette checking for 180°-interlocked '7' pairs.
+ * Detect Collision between canvas items using full rotated AABBs and exact 2D contour/OBB
+ * checking for 180°-interlocked '7' pairs, 180°-interlocked A' pairs, and arch-nested round names.
  */
 export function checkCollisions(
   items: CanvasItem[],
@@ -1705,9 +2579,10 @@ export function checkCollisions(
       const overlapY = bA.y < bB.y + bB.height && bA.y + bA.height > bB.y;
 
       if (overlapX && overlapY) {
-        // Check if pair is an opposite-oriented (0° vs 180°) '7' diagonal interlock
         const rotA = ((a.rotation || 0) % 360 + 360) % 360;
         const rotB = ((b.rotation || 0) % 360 + 360) % 360;
+
+        // 1. 180°-interlocked '7' pair contour clearance check
         const isOpposite7Pair =
           a.itemType === 'number' &&
           b.itemType === 'number' &&
@@ -1716,24 +2591,40 @@ export function checkCollisions(
           ((rotA === 0 && rotB === 180) || (rotA === 180 && rotB === 0));
 
         if (isOpposite7Pair) {
-          const minY = Math.max(bA.y, bB.y);
-          const maxY = Math.min(bA.y + bA.height, bB.y + bB.height);
-          let realInkCollision = false;
-
-          if (maxY > minY) {
-            const steps = 20;
-            for (let s = 0; s < steps; s++) {
-              const qY = minY + ((s + 0.5) / steps) * (maxY - minY);
-              const sA = getItemSliceXSpan(bA.x, bA.y, bA.width, bA.height, rotA, '7', a.preset, qY);
-              const sB = getItemSliceXSpan(bB.x, bB.y, bB.width, bB.height, rotB, '7', b.preset, qY);
-              if (sA && sB && sA.minX < sB.maxX - 0.02 && sA.maxX > sB.minX + 0.02) {
-                realInkCollision = true;
-                break;
-              }
-            }
+          const profA = getDigitHorizontalProfile('7', a.preset, bA.width / Math.max(0.5, bA.height));
+          const profB = getDigitHorizontalProfile('7', b.preset, bB.width / Math.max(0.5, bB.height));
+          if (!hasProfile2DCollision(profA, bA.x, bA.y, bA.width, bA.height, rotA, profB, bB.x, bB.y, bB.width, bB.height, rotB, 0.03)) {
+            continue;
           }
+        }
 
-          if (!realInkCollision) {
+        // 2. 180°-interlocked A' pair contour clearance check
+        const isOppositeApPair =
+          a.itemType === 'name' &&
+          b.itemType === 'name' &&
+          isApName(a.customerName) &&
+          isApName(b.customerName) &&
+          ((rotA === 0 && rotB === 180) || (rotA === 180 && rotB === 0));
+
+        if (isOppositeApPair) {
+          const profA = getNameHorizontalProfile(a.customerName, a.preset, bA.width, bA.height);
+          const profB = getNameHorizontalProfile(b.customerName, b.preset, bB.width, bB.height);
+          if (!hasProfile2DCollision(profA, bA.x, bA.y, bA.width, bA.height, rotA, profB, bB.x, bB.y, bB.width, bB.height, rotB, 0.03)) {
+            continue;
+          }
+        }
+
+        // 3. Arch-nested curved round names (exact oriented glyph SAT check)
+        const isCurvedNamePair =
+          a.itemType === 'name' &&
+          b.itemType === 'name' &&
+          rotA === 0 &&
+          rotB === 0 &&
+          isPresetCurved(a.preset) &&
+          isPresetCurved(b.preset);
+
+        if (isCurvedNamePair) {
+          if (!doCurvedItemsCollide(a, b, 0.02)) {
             continue;
           }
         }

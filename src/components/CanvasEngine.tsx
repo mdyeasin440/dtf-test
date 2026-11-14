@@ -2388,7 +2388,7 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
   const singleSelectedItem = selectedItems.length === 1 ? selectedItems[0] : null;
 
   return (
-    <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 py-3 lg:py-6 overflow-x-hidden">
+    <div className="max-w-7xl mx-auto px-2.5 sm:px-6 lg:px-8 py-3 lg:py-6 overflow-x-clip">
       {/* Top Toolbar */}
       <div className="bg-zinc-900 rounded-xl border border-zinc-800 p-3 sm:p-4 mb-4 lg:mb-6 shadow-xl flex flex-wrap items-center justify-between gap-3 lg:gap-4">
         {/* Roll Settings */}
@@ -2511,47 +2511,8 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
           </button>
         </div>
 
-        {/* Auto Nesting Strategy & History Undo/Redo Controls */}
+        {/* Auto Re-Nest Sheet Action */}
         <div className="flex items-center space-x-3">
-          {/* Undo & Redo Adobe-style Buttons */}
-          <div className="flex items-center space-x-1 bg-zinc-950 p-1 rounded-lg border border-zinc-800 shadow-inner">
-            <button
-              onClick={handleUndo}
-              disabled={historyIndex <= 0}
-              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-xs font-mono font-bold transition-all ${
-                historyIndex > 0
-                  ? 'text-zinc-200 hover:text-white hover:bg-zinc-800 active:scale-95 cursor-pointer'
-                  : 'text-zinc-600 opacity-40 cursor-not-allowed'
-              }`}
-              title="Undo (Ctrl+Z / Cmd+Z)"
-            >
-              <Undo2 className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Undo</span>
-              <kbd className="hidden sm:inline-block text-[9px] px-1 py-0.2 bg-zinc-900 border border-zinc-800 rounded text-zinc-400">
-                Ctrl+Z
-              </kbd>
-            </button>
-
-            <div className="w-[1px] h-4 bg-zinc-800" />
-
-            <button
-              onClick={handleRedo}
-              disabled={historyIndex >= history.length - 1}
-              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-xs font-mono font-bold transition-all ${
-                historyIndex < history.length - 1
-                  ? 'text-zinc-200 hover:text-white hover:bg-zinc-800 active:scale-95 cursor-pointer'
-                  : 'text-zinc-600 opacity-40 cursor-not-allowed'
-              }`}
-              title="Redo (Ctrl+Shift+Z / Ctrl+Y / Cmd+Shift+Z)"
-            >
-              <Redo2 className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Redo</span>
-              <kbd className="hidden sm:inline-block text-[9px] px-1 py-0.2 bg-zinc-900 border border-zinc-800 rounded text-zinc-400">
-                Ctrl+⇧+Z
-              </kbd>
-            </button>
-          </div>
-
           <button
             onClick={handleRePack}
             className="flex items-center space-x-2 px-4 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-bold uppercase tracking-wider rounded shadow-lg shadow-red-900/20 transition-all"
@@ -2959,8 +2920,47 @@ export const CanvasEngine: React.FC<CanvasEngineProps> = ({
         {/* Selected Item Inspector Panel - Sticky synchronized alongside viewport scrolling */}
         <div
           ref={inspectorSectionRef}
-          className="lg:col-span-4 space-y-6 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto pr-1"
+          className="lg:col-span-4 space-y-4 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto pr-1"
         >
+          {/* Undo / Redo Controls above Inspector & Modification Log */}
+          <div className="grid grid-cols-2 gap-1.5 bg-zinc-950 p-1.5 rounded-xl border border-zinc-800 shadow-inner">
+            <button
+              type="button"
+              onClick={handleUndo}
+              disabled={historyIndex <= 0}
+              className={`flex items-center justify-center space-x-1.5 py-2 px-3 rounded-lg text-xs font-mono font-bold transition-all ${
+                historyIndex > 0
+                  ? 'bg-zinc-900 text-zinc-100 hover:text-white hover:bg-zinc-800 border border-zinc-700 active:scale-95 cursor-pointer'
+                  : 'bg-zinc-950 text-zinc-600 border border-zinc-900 opacity-45 cursor-not-allowed'
+              }`}
+              title="Undo (Ctrl+Z / Cmd+Z)"
+            >
+              <Undo2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <span>Undo</span>
+              <kbd className="hidden sm:inline-block text-[9px] px-1 py-0.2 bg-zinc-950 border border-zinc-800 rounded text-zinc-400">
+                Ctrl+Z
+              </kbd>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleRedo}
+              disabled={historyIndex >= history.length - 1}
+              className={`flex items-center justify-center space-x-1.5 py-2 px-3 rounded-lg text-xs font-mono font-bold transition-all ${
+                historyIndex < history.length - 1
+                  ? 'bg-zinc-900 text-zinc-100 hover:text-white hover:bg-zinc-800 border border-zinc-700 active:scale-95 cursor-pointer'
+                  : 'bg-zinc-950 text-zinc-600 border border-zinc-900 opacity-45 cursor-not-allowed'
+              }`}
+              title="Redo (Ctrl+Shift+Z / Ctrl+Y / Cmd+Shift+Z)"
+            >
+              <Redo2 className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <span>Redo</span>
+              <kbd className="hidden sm:inline-block text-[9px] px-1 py-0.2 bg-zinc-950 border border-zinc-800 rounded text-zinc-400">
+                Ctrl+⇧+Z
+              </kbd>
+            </button>
+          </div>
+
           {/* Side Panel Tab Selector */}
           <div className="flex items-center space-x-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800 shadow-inner">
             <button

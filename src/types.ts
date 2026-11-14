@@ -125,7 +125,8 @@ export interface DigitSplitLogEntry {
     | 'manual_unbundle'
     | 'smart_name_split'
     | 'manual_name_ungroup'
-    | 'interlock_7_pair';
+    | 'interlock_7_pair'
+    | 'interlock_ap_pair';
   entryType?: 'number' | 'name' | 'interlock';
   digits: DigitSplitLocation[];
   spaceSavedInches: number;

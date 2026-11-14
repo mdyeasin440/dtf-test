@@ -110,6 +110,12 @@ export const ModificationTrackerPanel: React.FC<ModificationTrackerPanelProps> =
           bg: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
           desc: 'Paired upright & upside-down 7s along diagonal contour to save width',
         };
+      case 'interlock_ap_pair':
+        return {
+          label: "180° A'-Pair Nested",
+          bg: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
+          desc: "Paired upright & upside-down A' items to tuck apostrophe overhangs tightly",
+        };
       default:
         return {
           label: 'Gap Optimization',
@@ -273,6 +279,7 @@ export const ModificationTrackerPanel: React.FC<ModificationTrackerPanelProps> =
           <option value="smart_name_split">Smart Name Splits</option>
           <option value="manual_name_ungroup">Ungrouped Names</option>
           <option value="interlock_7_pair">180° 7-Pairs</option>
+          <option value="interlock_ap_pair">180° A'-Pairs</option>
         </select>
       </div>
 
@@ -406,7 +413,7 @@ export const ModificationTrackerPanel: React.FC<ModificationTrackerPanelProps> =
                     </span>
                   </button>
 
-                  {log.reason !== 'interlock_7_pair' && (
+                  {log.reason !== 'interlock_7_pair' && log.reason !== 'interlock_ap_pair' && (
                     <button
                       onClick={() => onMergeDigits(log)}
                       className="py-1.5 px-2.5 bg-zinc-800 hover:bg-emerald-600 hover:text-white text-zinc-300 text-xs font-bold font-mono uppercase rounded border border-zinc-700 transition-all flex items-center space-x-1"
